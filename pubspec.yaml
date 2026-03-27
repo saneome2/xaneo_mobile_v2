@@ -1,0 +1,79 @@
+name: xaneo_mobile
+description: Xaneo Mobile v2 - Secure messaging app
+publish_to: 'none'
+version: 2.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # State Management
+  provider: ^6.1.1
+
+  # HTTP & API
+  dio: ^5.4.0
+  dio_cookie_manager: ^3.1.1
+  cookie_jar: ^4.0.8
+
+  # Secure Storage
+  flutter_secure_storage: ^9.2.1
+
+  # Local Storage (for non-sensitive data)
+  shared_preferences: ^2.2.2
+
+  # UI Components
+  google_fonts: ^6.1.0
+  cupertino_icons: ^1.0.6
+
+  # Localization (pinned by flutter_localizations)
+  intl: ^0.20.2
+
+  # Connectivity
+  connectivity_plus: ^5.0.2
+
+  # Animations
+  animations: ^2.0.8
+
+  # Form validation
+  form_field_validator: ^1.1.0
+
+  # Image picking and cropping
+  image_picker: ^1.0.7
+
+  # Permissions
+  permission_handler: ^11.3.0
+
+  # URL Launcher
+  url_launcher: ^6.2.5
+
+  # Biometric (optional - for future)
+  local_auth: ^2.1.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  generate: true
+
+  assets:
+    - assets/images/
+    - assets/fonts/
+
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
