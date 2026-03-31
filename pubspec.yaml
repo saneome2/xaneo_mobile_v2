@@ -53,6 +53,7 @@ dependencies:
 
   # Biometric (optional - for future)
   local_auth: ^2.1.8
+  font_awesome_flutter: ^11.0.0
 
 dev_dependencies:
   flutter_test:

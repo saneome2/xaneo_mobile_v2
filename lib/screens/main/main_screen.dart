@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import '../../models/auth/user_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../styles/app_styles.dart';
+import '../../widgets/common/liquid_glass_nav_bar.dart';
 import '../auth/login_screen.dart';
+import '../chat/chat_list_screen.dart';
 
 /// Главный экран приложения (после авторизации)
 class MainScreen extends StatefulWidget {
@@ -23,105 +25,27 @@ class _MainScreenState extends State<MainScreen> {
     
     return Scaffold(
       backgroundColor: AppStyles.backgroundColor,
-      body: IndexedStack(
-        index: _currentIndex,
+      body: Stack(
         children: [
-          _buildChatsScreen(),
-          _buildContactsScreen(),
-          _buildSettingsScreen(user),
-        ],
-      ),
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          border: Border(
-            top: BorderSide(color: AppStyles.borderColor, width: 1),
+          IndexedStack(
+            index: _currentIndex,
+            children: [
+              const ChatListScreen(), // Use updated actual chat screen
+              _buildContactsScreen(),
+              _buildSettingsScreen(user),
+            ],
           ),
-        ),
-        child: NavigationBar(
-          backgroundColor: AppStyles.backgroundColor,
-          indicatorColor: AppStyles.inputBackgroundColor,
-          selectedIndex: _currentIndex,
-          onDestinationSelected: (index) {
-            setState(() {
-              _currentIndex = index;
-            });
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.chat_bubble_outline, color: AppStyles.textMutedColor),
-              selectedIcon: Icon(Icons.chat_bubble, color: AppStyles.textPrimaryColor),
-              label: 'Чаты',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.people_outline, color: AppStyles.textMutedColor),
-              selectedIcon: Icon(Icons.people, color: AppStyles.textPrimaryColor),
-              label: 'Контакты',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined, color: AppStyles.textMutedColor),
-              selectedIcon: Icon(Icons.settings, color: AppStyles.textPrimaryColor),
-              label: 'Настройки',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChatsScreen() {
-    return SafeArea(
-      child: Column(
-        children: [
-          // Заголовок
-          Padding(
-            padding: AppStyles.screenPadding.copyWith(top: 16),
-            child: Row(
-              children: [
-                Text('Чаты', style: AppStyles.titleLarge),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.search, color: AppStyles.textPrimaryColor),
-                  onPressed: () {
-                    // TODO: Поиск
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add, color: AppStyles.textPrimaryColor),
-                  onPressed: () {
-                    // TODO: Новый чат
-                  },
-                ),
-              ],
-            ),
-          ),
-          
-          // Список чатов (заглушка)
-          Expanded(
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.chat_bubble_outline,
-                    size: 64,
-                    color: AppStyles.textMutedColor,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Нет чатов',
-                    style: AppStyles.titleLarge.copyWith(
-                      color: AppStyles.textMutedColor,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Начните новый разговор',
-                    style: AppStyles.bodyMedium.copyWith(
-                      color: AppStyles.textMutedColor,
-                    ),
-                  ),
-                ],
-              ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: LiquidGlassNavBar(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
             ),
           ),
         ],
