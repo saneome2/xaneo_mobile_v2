@@ -53,6 +53,15 @@ class AuthProvider extends ChangeNotifier {
       _cryptoService = _xsec2Service!.cryptoService;
     }
   }
+  
+  void _syncCryptoUserId() {
+    final crypto = _cryptoService;
+    final user = _user;
+    if (crypto == null || user == null || user.id <= 0) return;
+    
+    crypto.setCurrentUserId(user.id.toString());
+    debugPrint('XSEC-2: synced current user id=${user.id} to CryptoService');
+  }
 
   AuthStatus get status => _status;
   UserModel? get user => _user;
@@ -85,6 +94,7 @@ class AuthProvider extends ChangeNotifier {
       final isAuth = await _authService.isAuthenticated();
       if (isAuth) {
         _user = await _authService.getCurrentUser();
+        _syncCryptoUserId();
         _status = _user != null ? AuthStatus.authenticated : AuthStatus.unauthenticated;
 
         if (_status == AuthStatus.authenticated && _cryptoService != null) {
@@ -150,6 +160,7 @@ class AuthProvider extends ChangeNotifier {
         );
 
         _user = authResponse.user;
+        _syncCryptoUserId();
         _status = AuthStatus.authenticated;
 
         // Init XSEC-2 keys after successful login
@@ -229,6 +240,7 @@ class AuthProvider extends ChangeNotifier {
       );
 
       _user = tokenResponse.user;
+      _syncCryptoUserId();
       _status = AuthStatus.authenticated;
       _tfaToken = null;
       _pendingUsername = null;
@@ -281,6 +293,7 @@ class AuthProvider extends ChangeNotifier {
           emailVerified: true,
           createdAt: DateTime.now(),
         );
+        _syncCryptoUserId();
         _status = AuthStatus.authenticated;
         _setLoading(false);
         notifyListeners();
@@ -304,6 +317,7 @@ class AuthProvider extends ChangeNotifier {
   Future<void> logout() async {
     await _authService.logout();
     if (_cryptoService != null) {
+      _cryptoService!.setCurrentUserId('');
       await _cryptoService!.clearAllKeys();
     }
     _user = null;
@@ -413,6 +427,7 @@ class AuthProvider extends ChangeNotifier {
             avatar: response.userInfo!.avatarUrl,
             createdAt: DateTime.now(),
           );
+          _syncCryptoUserId();
           await _saveRecentAccount(_user!);
         }
         _status = AuthStatus.authenticated;

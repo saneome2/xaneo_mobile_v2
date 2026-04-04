@@ -710,6 +710,14 @@ class CryptoService {
   Future<Uint8List?> _generatePersonalChatKey(
       String chatId, String theirPublicKey) async {
     try {
+      final parts = chatId.split('_');
+      final currentUserId = await _getCurrentUserId();
+      if (parts.length >= 3 && currentUserId != null && currentUserId.isNotEmpty) {
+        final otherUserId = parts[1] == currentUserId ? parts[2] : parts[1];
+        final sharedSecret = await _computeSharedSecret(theirPublicKey);
+        return _derivePersonalWebKey(sharedSecret, currentUserId, otherUserId);
+      }
+
       final sharedSecret = await _computeSharedSecret(theirPublicKey);
 
       // Backend/web: HKDF-SHA256 with fixed root context
@@ -718,6 +726,33 @@ class CryptoService {
       debugPrint('XSEC-2: Error generating personal chat key: $e');
       return null;
     }
+  }
+
+  /// Точная web-деривация ключа favorites:
+  /// shared = X25519(self, self)
+  /// salt = blake2b("favorites:<userId>", 32)
+  /// key = blake2b(shared, key=salt, 32)
+  Uint8List _deriveFavoritesWebKey(Uint8List sharedSecret, String userId) {
+    final context = Uint8List.fromList(utf8.encode('favorites:$userId'));
+    final salt = _blake2bDigest(context, outputLength: 32);
+    return _blake2bDigest(sharedSecret, key: salt, outputLength: 32);
+  }
+
+  /// Web-деривация ключа personal:
+  /// context = personal:<minUserId>:<maxUserId>
+  /// salt = blake2b(context, 32)
+  /// key = blake2b(shared, key=salt, 32)
+  Uint8List _derivePersonalWebKey(
+    Uint8List sharedSecret,
+    String userA,
+    String userB,
+  ) {
+    final sorted = [userA, userB]..sort();
+    final context = Uint8List.fromList(
+      utf8.encode('personal:${sorted[0]}:${sorted[1]}'),
+    );
+    final salt = _blake2bDigest(context, outputLength: 32);
+    return _blake2bDigest(sharedSecret, key: salt, outputLength: 32);
   }
 
   // ================================================================
@@ -737,6 +772,10 @@ class CryptoService {
     if (parts[0] == 'personal' && parts.length >= 3) {
       // Личный чат: ECDH с собеседником
       final currentUserId = await _getCurrentUserId();
+      if (currentUserId == null || currentUserId.isEmpty) {
+        debugPrint('XSEC-2: personal: current user id is not set');
+        return null;
+      }
       final otherUserId = parts[1] == currentUserId ? parts[2] : parts[1];
 
       final theirKeyData = await fetchUserPublicKey(otherUserId);
@@ -774,10 +813,16 @@ class CryptoService {
         return null;
       }
 
+      final currentUserId = await _getCurrentUserId();
+      if (currentUserId == null || currentUserId.isEmpty) {
+        debugPrint('XSEC-2: favorites: current user id is not set');
+        return null;
+      }
+
       final sharedSecret = await _computeSharedSecret(myPub);
 
-      // Backend/web: HKDF-SHA256 with fixed root context
-      final key = await _deriveRootKey(sharedSecret);
+      // Web-compatible favorites derivation (without root HKDF)
+      final key = _deriveFavoritesWebKey(sharedSecret, currentUserId);
       _chatKeyCache[chatId] = key;
       return key;
     }
@@ -856,7 +901,8 @@ class CryptoService {
   }
 
   /// Расшифровывает сообщение
-  /// Веб использует XChaCha20-Poly1305 с 24-байт nonce
+  /// Для personal/favorites web в приоритете AES-GCM (nonce=12, формат nonce|cipher|tag)
+  /// XChaCha20/ChaCha20 оставлены как fallback для legacy payload.
   Future<String?> decryptMessage(String encryptedBase64, String chatId) async {
     try {
       debugPrint('XSEC-2: decryptMessage start for chat $chatId');
@@ -1294,10 +1340,41 @@ class CryptoService {
       }
     }
 
-    add(baseKey, label: 'base');
-
     final parts = chatId.split('_');
     if (parts.isEmpty) return variants;
+
+    if (parts[0] == 'personal' && parts.length >= 3 && myPublicKey != null) {
+      try {
+        final currentUserId = await _getCurrentUserId();
+        if (currentUserId != null && currentUserId.isNotEmpty) {
+          final otherUserId = parts[1] == currentUserId ? parts[2] : parts[1];
+          final theirKeyData = await fetchUserPublicKey(otherUserId);
+          final theirPub = theirKeyData?['x25519_public_key']?.toString();
+          if (theirPub != null && theirPub.isNotEmpty) {
+            final shared = await _computeSharedSecret(theirPub);
+            add(
+              _derivePersonalWebKey(shared, currentUserId, otherUserId),
+              label: 'personal.web.exact(blake2b)',
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (parts[0] == 'favorites' && myPublicKey != null) {
+      try {
+        final currentUserId = await _getCurrentUserId();
+        if (currentUserId != null && currentUserId.isNotEmpty) {
+          final shared = await _computeSharedSecret(myPublicKey!);
+          add(
+            _deriveFavoritesWebKey(shared, currentUserId),
+            label: 'favorites.web.exact(blake2b)',
+          );
+        }
+      } catch (_) {}
+    }
+
+    add(baseKey, label: 'base');
 
     // favorites: пробуем несколько исторических/кросс-клиентных derivation-вариантов
     if (parts[0] == 'favorites' && myPublicKey != null) {
@@ -1309,6 +1386,7 @@ class CryptoService {
         final rootHexBytes = Uint8List.fromList(utf8.encode(_bytesToHex(root)));
         final rootContext = Uint8List.fromList(utf8.encode(_rootKeyContext));
         final currentUserId = await _getCurrentUserId();
+        if (currentUserId == null || currentUserId.isEmpty) return variants;
         final chatIdBytes = Uint8List.fromList(utf8.encode(chatId));
         final userIdBytes = Uint8List.fromList(utf8.encode(currentUserId));
         final favContext =
@@ -1566,13 +1644,65 @@ class CryptoService {
     if (parts[0] == 'personal' && parts.length >= 3 && myPublicKey != null) {
       try {
         final currentUserId = await _getCurrentUserId();
+        if (currentUserId == null || currentUserId.isEmpty) return variants;
         final otherUserId = parts[1] == currentUserId ? parts[2] : parts[1];
         final theirKeyData = await fetchUserPublicKey(otherUserId);
         final theirPub = theirKeyData?['x25519_public_key']?.toString();
         if (theirPub != null && theirPub.isNotEmpty) {
           final shared = await _computeSharedSecret(theirPub);
+          add(shared, label: 'personal.shared.raw');
+          add(
+            await crypto.Sha256()
+                .hash(shared)
+                .then((h) => Uint8List.fromList(h.bytes)),
+            label: 'personal.sha256(shared)',
+          );
+
+          final sortedUsers = [currentUserId, otherUserId]..sort();
+          add(
+            await _legacyShaDerive(
+              shared,
+              'personal:${sortedUsers[0]}:${sortedUsers[1]}',
+            ),
+            label: 'personal.legacy.sha(userIds)',
+          );
+          add(
+            await _legacyShaDerive(shared, chatId),
+            label: 'personal.legacy.sha(chatId)',
+          );
+
+          final personalSalt = _blake2bDigest(
+            Uint8List.fromList(
+              utf8.encode('personal:${sortedUsers[0]}:${sortedUsers[1]}'),
+            ),
+            outputLength: 32,
+          );
+          add(
+            _blake2bDigest(shared, key: personalSalt, outputLength: 32),
+            label: 'personal.blake(shared|salt=personal:min:max)',
+          );
+
+          add(
+            _blake2bDigest(
+              shared,
+              key: _blake2bDigest(
+                Uint8List.fromList(utf8.encode(chatId)),
+                outputLength: 32,
+              ),
+              outputLength: 32,
+            ),
+            label: 'personal.blake(shared|salt=chatId)',
+          );
+
           final context = [myPublicKey!, theirPub]..sort();
-          add(await _legacyShaDerive(shared, context.join(':')));
+          add(
+            await _legacyShaDerive(shared, context.join(':')),
+            label: 'personal.legacy.sha(sortedPubKeys)',
+          );
+          add(
+            await _deriveHkdfFlexible(shared, salt: null, info: null),
+            label: 'personal.hkdf(shared,default)',
+          );
         }
       } catch (_) {}
     }
@@ -1814,8 +1944,11 @@ class CryptoService {
   }
 
   /// Получает ID текущего пользователя
-  Future<String> _getCurrentUserId() async {
-    if (_currentUserId != null) return _currentUserId!;
-    return '1';
+  Future<String?> _getCurrentUserId() async {
+    if (_currentUserId != null && _currentUserId!.isNotEmpty) {
+      return _currentUserId;
+    }
+    debugPrint('XSEC-2: current user id is not initialized');
+    return null;
   }
 }
