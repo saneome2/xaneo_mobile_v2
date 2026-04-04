@@ -362,8 +362,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   /// Попытка расшифровать сообщение.
-  /// Ключ генерируется детерминистически из chatId (PBKDF2), поэтому
-  /// не нужно ничего загружать с сервера — ключ совпадает с веб/сервером.
+  /// Ключ выбирается в CryptoService по типу чата:
+  /// personal/favorites через ECDH-деривацию, group/channel через epoch+legacy fallback.
   Future<String?> _tryDecryptMessage(CryptoService cryptoService, ChatModel chat) async {
     if (chat.lastMessage == null) return null;
 
