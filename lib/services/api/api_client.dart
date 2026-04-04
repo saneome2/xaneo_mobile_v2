@@ -262,8 +262,15 @@ class _LoggingInterceptor extends Interceptor {
           if (data.containsKey('access')) data['access'] = '***';
           if (data.containsKey('refresh')) data['refresh'] = '***';
           if (data.containsKey('temp_token')) data['temp_token'] = '***';
+          debugPrint(' Response data: $data');
+        } else {
+          final text = data.toString();
+          if (text.length > 600 || text.startsWith('<!DOCTYPE html>')) {
+            debugPrint(' Response data: <omitted large/non-json payload, len=${text.length}>');
+          } else {
+            debugPrint(' Response data: $text');
+          }
         }
-        debugPrint(' Response data: $data');
       }
     }
     handler.next(response);
@@ -276,7 +283,12 @@ class _LoggingInterceptor extends Interceptor {
       debugPrint(' Error type: ${err.type}');
       debugPrint(' Error message: ${err.message}');
       if (err.response?.data != null) {
-        debugPrint(' Error data: ${err.response?.data}');
+        final errorText = err.response?.data.toString() ?? '';
+        if (errorText.length > 600 || errorText.startsWith('<!DOCTYPE html>')) {
+          debugPrint(' Error data: <omitted large/non-json payload, len=${errorText.length}>');
+        } else {
+          debugPrint(' Error data: $errorText');
+        }
       }
     }
     handler.next(err);

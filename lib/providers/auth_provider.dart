@@ -7,22 +7,15 @@ import '../services/auth/auth_service.dart';
 import '../services/auth/recent_accounts_service.dart';
 import '../services/auth/token_storage.dart';
 import '../services/api/api_client.dart';
+import '../services/crypto/crypto_service.dart';
+import '../services/crypto/xsec2_service.dart';
 
 /// Состояние авторизации
 enum AuthStatus {
-  /// Начальное состояние, проверка не выполнена
   initial,
-
-  /// Проверка авторизации в процессе
   checking,
-
-  /// Пользователь не авторизован
   unauthenticated,
-
-  /// Требуется 2FA
   tfaRequired,
-
-  /// Пользователь авторизован
   authenticated,
 }
 
@@ -30,22 +23,36 @@ enum AuthStatus {
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService;
   final RecentAccountsService _recentAccountsService;
+  final Xsec2Service? _xsec2Service;
+  CryptoService? _cryptoService;
 
   AuthStatus _status = AuthStatus.initial;
   UserModel? _user;
-  String? _tfaToken; // Временный токен для 2FA
-  String? _pendingUsername; // Для повторного входа после 2FA
-  String? _pendingPassword; // Для повторного входа после 2FA
+  String? _tfaToken;
+  String? _pendingUsername;
+  String? _pendingPassword;
   ApiError? _error;
   bool _isLoading = false;
 
   AuthProvider({
     required AuthService authService,
     required RecentAccountsService recentAccountsService,
-  })  : _authService = authService,
-        _recentAccountsService = recentAccountsService;
+    Xsec2Service? xsec2Service,
+    CryptoService? cryptoService,
+  }) : _authService = authService,
+       _recentAccountsService = recentAccountsService,
+       _xsec2Service = xsec2Service,
+       _cryptoService = cryptoService;
 
-  // ========== Getters ==========
+  void setCryptoService(CryptoService cryptoService) {
+    _cryptoService = cryptoService;
+  }
+
+  void _syncCryptoServiceFromXsec2() {
+    if (_cryptoService == null && _xsec2Service != null) {
+      _cryptoService = _xsec2Service!.cryptoService;
+    }
+  }
 
   AuthStatus get status => _status;
   UserModel? get user => _user;
@@ -55,10 +62,22 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _status == AuthStatus.authenticated;
   bool get requiresTfa => _status == AuthStatus.tfaRequired;
 
-  // ========== Public Methods ==========
+  Future<void> checkAuthStatus({CryptoService? cryptoService}) async {
+    if (cryptoService != null) {
+      _cryptoService = cryptoService;
+    }
 
-  /// Проверка авторизации при запуске приложения
-  Future<void> checkAuthStatus() async {
+    _syncCryptoServiceFromXsec2();
+
+    if (_cryptoService != null) {
+      try {
+        await _cryptoService!.init();
+        debugPrint('XSEC-2: CryptoService initialized, hasKeys=${_cryptoService!.hasKeys}');
+      } catch (e) {
+        debugPrint('XSEC-2: CryptoService init error: $e');
+      }
+    }
+
     _status = AuthStatus.checking;
     notifyListeners();
 
@@ -66,9 +85,28 @@ class AuthProvider extends ChangeNotifier {
       final isAuth = await _authService.isAuthenticated();
       if (isAuth) {
         _user = await _authService.getCurrentUser();
-        _status = _user != null
-            ? AuthStatus.authenticated
-            : AuthStatus.unauthenticated;
+        _status = _user != null ? AuthStatus.authenticated : AuthStatus.unauthenticated;
+
+        if (_status == AuthStatus.authenticated && _cryptoService != null) {
+          try {
+            await _cryptoService!.ensureLocalKeyMatchesServer();
+            if (!_cryptoService!.hasKeys) {
+              final restored = await _cryptoService!.restoreKeysFromServerIfPossible();
+              if (restored) {
+                debugPrint('XSEC-2: Restored keys from server payload');
+              } else if (_cryptoService!.serverKeysPresentWithoutRecovery) {
+                debugPrint('XSEC-2: Server keys detected, skip regeneration to avoid key rotation');
+              } else {
+                debugPrint('XSEC-2: No keys found anywhere, generating...');
+                final keys = await _cryptoService!.generateUserKeys();
+                await _cryptoService!.saveUserKeys(keys);
+                await _cryptoService!.uploadKeysToServer();
+              }
+            }
+          } catch (e) {
+            debugPrint('XSEC-2: Error: $e');
+          }
+        }
       } else {
         _status = AuthStatus.unauthenticated;
       }
@@ -79,38 +117,22 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Вход в систему через mobile-login API
-  ///
-  /// Возвращает:
-  /// - true если вход успешен (без 2FA)
-  /// - false если требуется 2FA или ошибка
-  ///
-  /// При успешном входе автоматически получает JWT токены
   Future<bool> login({
     required String username,
     required String password,
   }) async {
     debugPrint('=== AuthProvider.login() ===');
+    _syncCryptoServiceFromXsec2();
     _setLoading(true);
     _clearError();
 
     try {
-      // Шаг 1: Проверяем credentials через mobile-login
-      debugPrint('Step 1: Calling mobileLogin...');
       final result = await _authService.mobileLogin(
         username: username,
         password: password,
       );
-      
-      debugPrint('MobileLogin result:');
-      debugPrint('  isSuccess: ${result.isSuccess}');
-      debugPrint('  requiresTfa: ${result.requiresTfa}');
-      debugPrint('  isError: ${result.isError}');
-      debugPrint('  message: ${result.message}');
 
-      // Если требуется 2FA
       if (result.requiresTfa) {
-        debugPrint('=> Setting status to tfaRequired');
         _status = AuthStatus.tfaRequired;
         _tfaToken = result.tempToken;
         _pendingUsername = username;
@@ -121,39 +143,64 @@ class AuthProvider extends ChangeNotifier {
         return false;
       }
 
-      // Если вход успешен (без 2FA) - получаем JWT токены
       if (result.isSuccess) {
-        debugPrint('=> Getting JWT tokens...');
-        // Получаем JWT токены через обычный login endpoint
         final authResponse = await _authService.loginWithTokens(
           username: username,
           password: password,
         );
-        
-        debugPrint('JWT tokens received:');
-        debugPrint('  user: ${authResponse.user.username}');
 
         _user = authResponse.user;
         _status = AuthStatus.authenticated;
 
-        // Сохраняем аккаунт в недавних
-        await _saveRecentAccount(_user!);
+        // Init XSEC-2 keys after successful login
+        if (_cryptoService != null) {
+          try {
+            await _cryptoService!.init();
+            await _cryptoService!.ensureLocalKeyMatchesServer();
+            if (!_cryptoService!.hasKeys) {
+              final restoredFromMobile = await _cryptoService!
+                  .tryRestoreKeysFromServerPayload(
+                    result.response?.xsec2,
+                    password: password,
+                    username: username,
+                  );
 
+              final restored = restoredFromMobile ||
+                  await _cryptoService!.restoreKeysFromServerIfPossible(
+                    password: password,
+                    username: username,
+                  );
+
+              if (restored) {
+                debugPrint('XSEC-2: Restored keys from server payload after login');
+              } else if (_cryptoService!.serverKeysPresentWithoutRecovery) {
+                debugPrint('XSEC-2: Server keys detected, skip regeneration to avoid key rotation');
+              } else {
+                debugPrint('XSEC-2: No keys after login, generating...');
+                final keys = await _cryptoService!.generateUserKeys();
+                await _cryptoService!.saveUserKeys(keys);
+                await _cryptoService!.uploadKeysToServer();
+              }
+            } else {
+              debugPrint('XSEC-2: Keys exist after login');
+            }
+          } catch (e) {
+            debugPrint('XSEC-2: Error after login: $e');
+          }
+        }
+
+        await _saveRecentAccount(_user!);
         _setLoading(false);
-        debugPrint('=> Setting status to authenticated, calling notifyListeners()');
         notifyListeners();
         return true;
       }
 
-      // Ошибка авторизации
-      debugPrint('=> Login failed: ${result.message}');
-      _error = ApiError(message: result.message ?? 'Ошибка авторизации');
+      _error = ApiError(message: result.message ?? 'Login failed');
       _status = AuthStatus.unauthenticated;
       _setLoading(false);
       notifyListeners();
       return false;
     } on ApiError catch (e) {
-      debugPrint('=> ApiError: ${e.message}');
       _error = e;
       _status = AuthStatus.unauthenticated;
       _setLoading(false);
@@ -162,9 +209,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Подтверждение 2FA кода
-  /// 
-  /// После успешной верификации получает JWT токены
   Future<bool> verifyTfaCode(String code) async {
     if (_tfaToken == null || _pendingUsername == null || _pendingPassword == null) {
       return false;
@@ -174,13 +218,11 @@ class AuthProvider extends ChangeNotifier {
     _clearError();
 
     try {
-      // Шаг 1: Верифицируем 2FA код
-      final authResponse = await _authService.verifyTfaCode(
+      await _authService.verifyTfaCode(
         tfaCodeId: _tfaToken!,
         code: code,
       );
 
-      // Шаг 2: Получаем JWT токены через обычный login
       final tokenResponse = await _authService.loginWithTokens(
         username: _pendingUsername!,
         password: _pendingPassword!,
@@ -202,7 +244,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Отмена процесса 2FA и очистка временных данных
   void cancelTfa() {
     _tfaToken = null;
     _pendingUsername = null;
@@ -211,7 +252,6 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Регистрация
   Future<bool> register({
     required String username,
     required String email,
@@ -234,12 +274,11 @@ class AuthProvider extends ChangeNotifier {
       );
 
       if (registerResponse.success) {
-        // Создаем UserModel из ответа регистрации
         _user = UserModel(
           id: registerResponse.userId ?? 0,
           username: registerResponse.username ?? '',
           email: registerResponse.email ?? '',
-          emailVerified: true, // Email уже верифицирован
+          emailVerified: true,
           createdAt: DateTime.now(),
         );
         _status = AuthStatus.authenticated;
@@ -247,7 +286,7 @@ class AuthProvider extends ChangeNotifier {
         notifyListeners();
         return true;
       } else {
-        _error = ApiError(message: registerResponse.message ?? 'Ошибка регистрации');
+        _error = ApiError(message: registerResponse.message ?? 'Registration failed');
         _status = AuthStatus.unauthenticated;
         _setLoading(false);
         notifyListeners();
@@ -262,9 +301,11 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Выход из системы
   Future<void> logout() async {
     await _authService.logout();
+    if (_cryptoService != null) {
+      await _cryptoService!.clearAllKeys();
+    }
     _user = null;
     _status = AuthStatus.unauthenticated;
     _tfaToken = null;
@@ -274,13 +315,11 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Очистка ошибки
   void clearError() {
     _clearError();
     notifyListeners();
   }
 
-  /// Сброс состояния 2FA (для возврата к экрану входа)
   void resetTfaState() {
     _status = AuthStatus.unauthenticated;
     _tfaToken = null;
@@ -289,9 +328,6 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ========== Registration Validation Methods ==========
-
-  /// Проверка доступности username
   Future<AvailabilityResponse> checkUsername(String username) async {
     try {
       return await _authService.checkUsername(username);
@@ -302,7 +338,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Проверка доступности email
   Future<AvailabilityResponse> checkEmail(String email) async {
     try {
       return await _authService.checkEmail(email);
@@ -313,7 +348,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Отправка кода верификации на email
   Future<VerificationCodeResponse> sendVerificationCode(String email, {String? username}) async {
     try {
       return await _authService.sendVerificationCode(email, username: username);
@@ -324,7 +358,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Проверка кода верификации email
   Future<VerifyCodeResponse> verifyEmailCode({
     required String email,
     required String code,
@@ -338,9 +371,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  // ========== Recent Accounts Methods ==========
-
-  /// Получение недавних аккаунтов для устройства
   Future<RecentAccountsResponse> getRecentAccounts() async {
     try {
       return await _authService.getRecentAccounts();
@@ -351,15 +381,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Быстрый вход в аккаунт
-  /// 
-  /// Параметры:
-  /// - userId: ID пользователя для быстрого входа
-  /// - tfaCode: код 2FA (если требуется)
-  /// 
-  /// Возвращает:
-  /// - true если вход успешен
-  /// - false если требуется 2FA или ошибка
   Future<bool> quickLogin({
     required int userId,
     String? tfaCode,
@@ -373,40 +394,34 @@ class AuthProvider extends ChangeNotifier {
         tfaCode: tfaCode,
       );
 
-      // Если требуется 2FA
       if (response.requiresTfa) {
         _status = AuthStatus.tfaRequired;
-        _tfaToken = response.code; // tfa_code_id
+        _tfaToken = response.code;
         _setLoading(false);
         notifyListeners();
         return false;
       }
 
-      // Если вход успешен
-    if (response.success) {
-      // Создаем UserModel из ответа
-      if (response.userInfo != null) {
-        _user = UserModel(
-          id: response.userInfo!.id ?? 0,
-          username: response.userInfo!.username ?? '',
-          email: response.userInfo!.email ?? '',
-          emailVerified: response.userInfo!.isVerified ?? false,
-          tfaEnabled: response.userInfo!.tfaEnabled ?? false,
-          avatar: response.userInfo!.avatarUrl,
-          createdAt: DateTime.now(),
-        );
-        
-        // Сохраняем аккаунт в недавних
-        await _saveRecentAccount(_user!);
+      if (response.success) {
+        if (response.userInfo != null) {
+          _user = UserModel(
+            id: response.userInfo!.id ?? 0,
+            username: response.userInfo!.username ?? '',
+            email: response.userInfo!.email ?? '',
+            emailVerified: response.userInfo!.isVerified ?? false,
+            tfaEnabled: response.userInfo!.tfaEnabled ?? false,
+            avatar: response.userInfo!.avatarUrl,
+            createdAt: DateTime.now(),
+          );
+          await _saveRecentAccount(_user!);
+        }
+        _status = AuthStatus.authenticated;
+        _setLoading(false);
+        notifyListeners();
+        return true;
       }
-      _status = AuthStatus.authenticated;
-      _setLoading(false);
-      notifyListeners();
-      return true;
-    }
 
-      // Ошибка
-      _error = ApiError(message: response.errorMessage ?? 'Ошибка быстрого входа');
+      _error = ApiError(message: response.errorMessage ?? 'Quick login failed');
       _status = AuthStatus.unauthenticated;
       _setLoading(false);
       notifyListeners();
@@ -420,8 +435,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  // ========== Private Methods ==========
-
   void _setLoading(bool value) {
     _isLoading = value;
   }
@@ -430,7 +443,6 @@ class AuthProvider extends ChangeNotifier {
     _error = null;
   }
 
-  /// Сохранение аккаунта в недавних
   Future<void> _saveRecentAccount(UserModel user) async {
     try {
       final account = RecentAccount(
@@ -445,13 +457,11 @@ class AuthProvider extends ChangeNotifier {
       );
       await _recentAccountsService.saveAccountLocally(account);
     } catch (e) {
-      // Ошибка сохранения не должна блокировать вход
       debugPrint('Error saving recent account: $e');
     }
   }
 }
 
-/// Фабрика для создания AuthProvider
 class AuthProviderFactory {
   static AuthProvider create() {
     final tokenStorage = TokenStorage();
@@ -467,6 +477,22 @@ class AuthProviderFactory {
     return AuthProvider(
       authService: authService,
       recentAccountsService: recentAccountsService,
+    );
+  }
+
+  static AuthProvider createWithCryptoService(ApiClient apiClient, CryptoService cryptoService) {
+    final authService = AuthService(
+      apiClient: apiClient,
+      tokenStorage: TokenStorage(),
+    );
+    final recentAccountsService = RecentAccountsService(
+      apiClient: apiClient,
+    );
+
+    return AuthProvider(
+      authService: authService,
+      recentAccountsService: recentAccountsService,
+      cryptoService: cryptoService,
     );
   }
 }

@@ -83,6 +83,30 @@ class AppConfig {
   /// Проверка JWT токена
   static const String authTokenVerify = '/auth/token/verify/';
 
+  // ========== Chat Endpoints ==========
+
+  /// Получение списка чатов пользователя
+  static const String chatsList = '/chats/';
+
+  // ========== XSEC-2 Endpoints ==========
+
+  /// Загрузка ключей на сервер
+  static const String xsec2UploadKeys = '/xsec2/upload-keys/';
+
+  /// Получение своих ключей
+  static const String xsec2MyKeys = '/xsec2/my-keys/';
+
+  /// Получение ключа чата (группа/канал)
+  /// chat_id должен быть в формате 'group_{id}' или 'channel_{id}'
+  static const String xsec2ChatKey = '/xsec2/keys/chat';
+
+  /// Получение публичных ключей пользователя
+  /// Формат: /xsec2/keys/{user_id_or_username}/
+  static const String xsec2UserKeys = '/xsec2/keys';
+
+  /// Получение текущей эпохи и ключей для пользователя
+  static const String xsec2GroupEpochCurrent = '/xsec2/group/epoch/current';
+
   // ========== Security ==========
   
   /// User-Agent для идентификации мобильного приложения

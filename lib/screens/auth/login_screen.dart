@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../config/app_config.dart';
 import '../../models/auth/recent_account.dart';
 import '../../providers/auth_provider.dart';
+import '../../screens/main/main_screen.dart';
 import '../../styles/app_styles.dart';
 import '../../widgets/common/auth_settings_modal.dart';
 import '../../widgets/common/avatar_widget.dart';
@@ -153,8 +154,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         MaterialPageRoute(builder: (_) => const TfaScreen()),
       );
     } else if (success) {
-      // Main screen navigation is handled by auth wrapper 
-    } else if (auth.error != null) {
+    // Переходим на главный экран
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const MainScreen()),
+      );
+    }
+  } else if (auth.error != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(auth.error!.message, style: AppStyles.bodyMedium.copyWith(color: Colors.white)),

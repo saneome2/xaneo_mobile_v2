@@ -42,6 +42,7 @@ class MobileLoginResponse {
   final UserModel? userInfo;
   final bool? tfaRequired;
   final String? tempToken; // Для 2FA верификации
+  final Map<String, dynamic>? xsec2;
 
   const MobileLoginResponse({
     required this.authSuccess,
@@ -49,6 +50,7 @@ class MobileLoginResponse {
     this.userInfo,
     this.tfaRequired,
     this.tempToken,
+    this.xsec2,
   });
 
   factory MobileLoginResponse.fromJson(Map<String, dynamic> json) {
@@ -64,6 +66,9 @@ class MobileLoginResponse {
       userInfo: user,
       tfaRequired: json['tfa_required'] as bool?,
       tempToken: json['token'] as String?,
+      xsec2: json['xsec2'] is Map<String, dynamic>
+          ? json['xsec2'] as Map<String, dynamic>
+          : null,
     );
   }
 

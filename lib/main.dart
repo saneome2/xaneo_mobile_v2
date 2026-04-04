@@ -8,6 +8,10 @@ import 'screens/auth/register_screen.dart';
 import 'screens/auth/onboarding_screen.dart';
 import 'screens/auth/tfa_screen.dart';
 import 'screens/main/main_screen.dart';
+import 'services/api/api_client.dart';
+import 'services/auth/token_storage.dart';
+import 'services/crypto/crypto_service.dart';
+import 'services/crypto/xsec2_service.dart';
 import 'styles/app_styles.dart';
 
 void main() {
@@ -32,10 +36,42 @@ class XaneoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Создаём ApiClient один раз для всего приложения
+    final tokenStorage = TokenStorage();
+    final apiClient = ApiClient(tokenStorage: tokenStorage);
+
+    // Создаём CryptoService для E2E шифрования (XSEC-2)
+    final cryptoService = CryptoService(
+      apiClient: apiClient,
+    );
+    
+    // Создаём Xsec2Service для работы с ключами
+    final xsec2Service = Xsec2Service(
+      apiClient: apiClient,
+      cryptoService: cryptoService,
+    );
+
     return MultiProvider(
       providers: [
+        // ApiClient для всех экранов
+        Provider<ApiClient>.value(value: apiClient),
+        // CryptoService для расшифровки сообщений
+        Provider<CryptoService>.value(value: cryptoService),
+        // Xsec2Service для работы с ключами
+        Provider<Xsec2Service>.value(value: xsec2Service),
+        // AuthProvider для авторизации
         ChangeNotifierProvider<AuthProvider>(
-          create: (_) => AuthProviderFactory.create()..checkAuthStatus(),
+          create: (context) {
+            final tokenStorage = TokenStorage();
+            final apiClient = ApiClient(tokenStorage: tokenStorage);
+            final cryptoService = context.read<CryptoService>();
+            final authProvider = AuthProviderFactory.createWithCryptoService(apiClient, cryptoService);
+            // Инициализируем авторизацию с CryptoService для XSEC-2
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              authProvider.checkAuthStatus(cryptoService: cryptoService);
+            });
+            return authProvider;
+          },
         ),
       ],
       child: MaterialApp(

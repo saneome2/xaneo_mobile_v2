@@ -1,0 +1,9 @@
+{
+  "profile": "openai",
+  "env": {
+    "OPENAI_BASE_URL": "https://integrate.api.nvidia.com/v1",
+    "OPENAI_MODEL": "minimaxai/minimax-m2.5",
+    "OPENAI_API_KEY": "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"
+  },
+  "createdAt": "2026-04-03T16:15:07.125Z"
+}

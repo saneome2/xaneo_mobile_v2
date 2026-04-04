@@ -27,6 +27,9 @@ class AvatarWidget extends StatelessWidget {
   /// Радиус скругления (по умолчанию size / 2 - круглый)
   final double? borderRadius;
 
+  /// Иконка для отображения (например, звезда для избранного)
+  final IconData? icon;
+
   const AvatarWidget({
     super.key,
     this.avatar,
@@ -35,28 +38,48 @@ class AvatarWidget extends StatelessWidget {
     required this.username,
     this.size = 48,
     this.borderRadius,
+    this.icon,
   });
 
   @override
   Widget build(BuildContext context) {
     final radius = borderRadius ?? size / 2;
+
+    // Определяем, какой аватар использовать
+    final bool useNetworkImage = hasAvatar && 
+        avatar != null && 
+        (avatar!.startsWith('http') || avatar!.startsWith('https'));
+    
+    // Для data URI (base64) не используем NetworkImage
+    final bool useDataImage = hasAvatar && 
+        avatar != null && 
+        avatar!.startsWith('data:');
+
+    // Для data:image показываем инициалы с градиентом
+    final bool showInitialsWithGradient = !useNetworkImage && 
+        (avatar == null || !avatar!.startsWith('http') || useDataImage);
+    
+    // Используем переданный градиент или дефолтный
+    final effectiveGradient = showInitialsWithGradient 
+        ? (avatarGradient ?? '10B981,14B8A6')  // Дефолтный градиент если null
+        : null;
     
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(radius),
-        gradient: hasAvatar && avatar != null
-            ? null
-            : _parseGradient(avatarGradient),
-        color: hasAvatar || avatarGradient != null
+        gradient: showInitialsWithGradient
+            ? _parseGradient(effectiveGradient)
+            : null,
+        color: showInitialsWithGradient
             ? null
             : Colors.grey.withOpacity(0.3),
         border: Border.all(
           color: Colors.white.withOpacity(0.1),
           width: 1,
         ),
-        image: hasAvatar && avatar != null
+        image: useNetworkImage
             ? DecorationImage(
                 image: NetworkImage(
                   '${AppConfig.apiBaseUrl}${avatar!.startsWith('/') ? '' : '/'}$avatar',
@@ -65,16 +88,22 @@ class AvatarWidget extends StatelessWidget {
               )
             : null,
       ),
-      child: !hasAvatar || avatar == null
+      child: showInitialsWithGradient
           ? Center(
-              child: Text(
-                _getInitials(),
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: size * 0.4,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              child: (icon != null)
+                  ? Icon(
+                      icon,
+                      color: Colors.white,
+                      size: size * 0.5,
+                    )
+                  : Text(
+                      _getInitials(),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: size * 0.4,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
             )
           : null,
     );
@@ -94,14 +123,15 @@ class AvatarWidget extends StatelessWidget {
   }
 
   /// Парсит градиент из строки
-  /// 
-  /// Формат: "color1,color2" или "color1,color2,color3"
+  ///
+  /// Формат: "color1,color2" или "color1|color2" или "color1,color2,color3"
   /// Цвета в формате hex: "#RRGGBB" или "RRGGBB"
   LinearGradient? _parseGradient(String? gradient) {
     if (gradient == null || gradient.isEmpty) return null;
 
     try {
-      final parts = gradient.split(',');
+      // Поддерживаем разделители , и |
+      final parts = gradient.split(RegExp(r'[,|]'));
       if (parts.isEmpty) return null;
 
       final colors = parts.map((part) {
