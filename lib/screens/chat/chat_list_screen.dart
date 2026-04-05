@@ -44,9 +44,41 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     try {
       final chats = await _chatService.getChats();
+      final cryptoService = context.read<CryptoService>();
+      
+      final decryptedChats = await Future.wait(
+        chats.map((chat) async {
+          if (chat.lastMessage != null && 
+              (chat.isEncrypted || _looksLikeJsonPayload(chat.lastMessage))) {
+            final decrypted = await cryptoService.decryptChatMessage(
+              chat.lastMessage!, 
+              chat.id,
+            );
+            if (decrypted != null) {
+              return ChatModel(
+                id: chat.id,
+                name: chat.name,
+                avatar: chat.avatar,
+                avatarGradient: chat.avatarGradient,
+                lastMessage: decrypted,
+                lastMessageTime: chat.lastMessageTime,
+                unreadCount: chat.unreadCount,
+                isGroup: chat.isGroup,
+                isChannel: chat.isChannel,
+                isPersonal: chat.isPersonal,
+                isFavorites: chat.isFavorites,
+                otherUser: chat.otherUser,
+                isEncrypted: false,
+              );
+            }
+          }
+          return chat;
+        }),
+      );
+      
       if (mounted) {
         setState(() {
-          _chats = chats;
+          _chats = decryptedChats;
           _isLoading = false;
         });
       }
@@ -236,7 +268,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         ),
                       ],
                     ),
-                    if (chat.lastMessage != null) ...[
+                    if (chat.lastMessage != null || chat.isGroup || chat.isChannel) ...[
               const SizedBox(height: 4),
               _buildMessageText(chat),
             ],
@@ -303,44 +335,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   );
 }
 
-  /// Построить текст сообщения с дешифрованием
   Widget _buildMessageText(ChatModel chat) {
-    // Если сообщение похоже на зашифрованный payload - пробуем расшифровать
-    final shouldTryDecrypt = chat.isEncrypted || _looksLikeJsonPayload(chat.lastMessage);
-    if (shouldTryDecrypt) {
-      final cryptoService = context.read<CryptoService>();
-      
-      return FutureBuilder<String?>(
-        future: _tryDecryptMessage(cryptoService, chat),
-        builder: (context, snapshot) {
-          if (snapshot.hasData && snapshot.data != null) {
-            return Text(
-              snapshot.data!,
-              style: const TextStyle(
-                fontSize: 14,
-                color: AppStyles.textMutedColor,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            );
-          }
-
-          // Не удалось расшифровать
-          return const Text(
-            '🔒 Зашифрованное сообщение',
-            style: TextStyle(
-              fontSize: 14,
-              color: AppStyles.textMutedColor,
-              fontStyle: FontStyle.italic,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          );
-        },
-      );
-    }
-
-    // Обычное сообщение
     return Text(
       chat.displayMessage,
       style: const TextStyle(
@@ -359,14 +354,5 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final hasNonce = RegExp(r'nonce\s*[:=]').hasMatch(trimmed);
     final hasCipher = RegExp(r'ciphertext\s*[:=]|encrypted_data\s*[:=]').hasMatch(trimmed);
     return hasNonce && hasCipher;
-  }
-
-  /// Попытка расшифровать сообщение.
-  /// Ключ выбирается в CryptoService по типу чата:
-  /// personal/favorites через ECDH-деривацию, group/channel через epoch+legacy fallback.
-  Future<String?> _tryDecryptMessage(CryptoService cryptoService, ChatModel chat) async {
-    if (chat.lastMessage == null) return null;
-
-    return cryptoService.decryptChatMessage(chat.lastMessage!, chat.id);
   }
 }

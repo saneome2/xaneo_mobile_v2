@@ -31,6 +31,9 @@ class CryptoService {
   /// Временный negative-cache для epoch endpoint (chatId → не опрашивать до времени)
   final Map<String, DateTime> _groupEpochRetryAfter = {};
 
+  /// Статус ответа epoch endpoint по чату (chatId → был ли HTTP 200)
+  final Map<String, bool> _groupEpochEndpointOk = {};
+
   /// In-flight запросы legacy chat key (chatId → Future<key?>)
   final Map<String, Future<Uint8List?>> _legacyChatKeyInFlight = {};
 
@@ -123,6 +126,7 @@ class CryptoService {
     _chatKeyCache.clear();
     _groupEpochKeyCache.clear();
     _groupEpochRetryAfter.clear();
+    _groupEpochEndpointOk.clear();
     _legacyChatKeyInFlight.clear();
     _groupEpochInFlight.clear();
     _sessionBlobRootKey = null;
@@ -851,6 +855,13 @@ class CryptoService {
         return epochCandidates.first;
       }
 
+      final epochOk = _groupEpochEndpointOk[chatId] == true;
+      if (epochOk) {
+        debugPrint(
+            'XSEC-2: group/channel: epoch endpoint responded 200 but no usable epoch key, skip legacy fallback');
+        return null;
+      }
+
       return await _fetchLegacyChatKey(chatId);
     }
 
@@ -912,6 +923,7 @@ class CryptoService {
 
     final future = () async {
       final variants = <Uint8List>[];
+      var endpointOk = false;
 
       void add(Uint8List key, {String? label}) {
         if (key.length != 32) return;
@@ -977,89 +989,11 @@ class CryptoService {
         }
       }
 
-      final parts = chatId.split('_');
-      final scopedId = parts.length >= 2 ? parts[1] : null;
-      final chatType = parts.isNotEmpty ? parts[0] : null;
-      final endpointBase = AppConfig.xsec2GroupEpochCurrent.endsWith('/')
-        ? AppConfig.xsec2GroupEpochCurrent
-        : '${AppConfig.xsec2GroupEpochCurrent}/';
-
       final requestPlans = <({String path, Map<String, dynamic>? query})>[
-      (path: '${AppConfig.xsec2GroupEpochCurrent}/$chatId/', query: null),
-      (path: '${AppConfig.xsec2GroupEpochCurrent}/$chatId', query: null),
-      (path: AppConfig.xsec2GroupEpochCurrent, query: {'chat_id': chatId}),
-      (path: endpointBase, query: {'chat_id': chatId}),
-      if (chatType != null)
-        (
-          path: AppConfig.xsec2GroupEpochCurrent,
-          query: {'chat_id': chatId, 'chat_type': chatType},
-        ),
-      if (chatType != null)
-        (
-          path: endpointBase,
-          query: {'chat_id': chatId, 'chat_type': chatType},
-        ),
-      if (parts[0] == 'group' && scopedId != null)
-        (path: AppConfig.xsec2GroupEpochCurrent, query: {'group_id': scopedId}),
-      if (parts[0] == 'group' && scopedId != null)
-        (path: endpointBase, query: {'group_id': scopedId}),
-      if (parts[0] == 'group' && scopedId != null)
-        (
-          path: AppConfig.xsec2GroupEpochCurrent,
-          query: {'chat_id': scopedId, 'chat_type': 'group'},
-        ),
-      if (parts[0] == 'group' && scopedId != null)
-        (
-          path: endpointBase,
-          query: {'chat_id': scopedId, 'chat_type': 'group'},
-        ),
-      if (parts[0] == 'group' && scopedId != null)
-        (
-          path: AppConfig.xsec2GroupEpochCurrent,
-          query: {'group_id': scopedId, 'chat_type': 'group'},
-        ),
-      if (parts[0] == 'group' && scopedId != null)
-        (
-          path: endpointBase,
-          query: {'group_id': scopedId, 'chat_type': 'group'},
-        ),
-      if (parts[0] == 'group' && scopedId != null)
-        (path: '${endpointBase}group/$scopedId/current/', query: null),
-      if (parts[0] == 'group' && scopedId != null)
-        (path: '/xsec2/group/$scopedId/epoch/current/', query: null),
-      if (parts[0] == 'group' && scopedId != null)
-        (path: '/xsec2/group/epoch/$scopedId/current/', query: null),
-      if (parts[0] == 'channel' && scopedId != null)
-        (path: AppConfig.xsec2GroupEpochCurrent, query: {'channel_id': scopedId}),
-      if (parts[0] == 'channel' && scopedId != null)
-        (path: endpointBase, query: {'channel_id': scopedId}),
-      if (parts[0] == 'channel' && scopedId != null)
-        (
-          path: AppConfig.xsec2GroupEpochCurrent,
-          query: {'chat_id': scopedId, 'chat_type': 'channel'},
-        ),
-      if (parts[0] == 'channel' && scopedId != null)
-        (
-          path: endpointBase,
-          query: {'chat_id': scopedId, 'chat_type': 'channel'},
-        ),
-      if (parts[0] == 'channel' && scopedId != null)
-        (
-          path: AppConfig.xsec2GroupEpochCurrent,
-          query: {'channel_id': scopedId, 'chat_type': 'channel'},
-        ),
-      if (parts[0] == 'channel' && scopedId != null)
-        (
-          path: endpointBase,
-          query: {'channel_id': scopedId, 'chat_type': 'channel'},
-        ),
-      if (parts[0] == 'channel' && scopedId != null)
-        (path: '${endpointBase}channel/$scopedId/current/', query: null),
-      if (parts[0] == 'channel' && scopedId != null)
-        (path: '/xsec2/channel/$scopedId/epoch/current/', query: null),
-      if (parts[0] == 'channel' && scopedId != null)
-        (path: '/xsec2/channel/epoch/$scopedId/current/', query: null),
-    ];
+        // Эталонный backend contract: /xsec2/group/<chat_id>/epoch/current/
+        (path: '/xsec2/group/$chatId/epoch/current/', query: null),
+        (path: '/xsec2/group/$chatId/epoch/current', query: null),
+      ];
 
       for (final plan in requestPlans) {
         try {
@@ -1069,6 +1003,10 @@ class CryptoService {
             options: Options(
                 validateStatus: (status) => status != null && status < 500),
           );
+
+          if (response.statusCode == 200) {
+            endpointOk = true;
+          }
 
           if (response.statusCode != 200 || response.data == null) {
             continue;
@@ -1081,9 +1019,11 @@ class CryptoService {
       if (variants.isNotEmpty) {
         _groupEpochKeyCache[chatId] = variants.first;
         _groupEpochRetryAfter.remove(chatId);
+        _groupEpochEndpointOk[chatId] = endpointOk;
       } else {
         _groupEpochRetryAfter[chatId] =
             DateTime.now().add(const Duration(minutes: 2));
+        _groupEpochEndpointOk[chatId] = endpointOk;
       }
 
       return variants;
@@ -1602,67 +1542,28 @@ class CryptoService {
     if (parts.isEmpty) return variants;
 
     if (parts[0] == 'group' || parts[0] == 'channel') {
+      var hasEpochKey = false;
       try {
         final epochKeys = await _fetchGroupEpochKeyCandidates(chatId);
         for (final key in epochKeys) {
           add(key, label: 'group.epoch.current');
         }
+        hasEpochKey = epochKeys.isNotEmpty;
       } catch (_) {}
 
-      final groupBaseKey = variants.isNotEmpty ? variants.first : baseKey;
-      final chatIdBytes = Uint8List.fromList(utf8.encode(chatId));
-      final chatSalt = _blake2bDigest(chatIdBytes, outputLength: 32);
-
-      add(groupBaseKey, label: 'group.base');
-      add(
-        await crypto.Sha256()
-            .hash(groupBaseKey)
-            .then((h) => Uint8List.fromList(h.bytes)),
-        label: 'group.sha256(base)',
-      );
-      add(
-        await _legacyShaDerive(groupBaseKey, chatId),
-        label: 'group.legacy.sha(chatId)',
-      );
-      add(
-        await _deriveHkdfFlexible(groupBaseKey, salt: null, info: null),
-        label: 'group.hkdf(base,default)',
-      );
-      add(
-        await _deriveHkdfFlexible(groupBaseKey, salt: chatIdBytes, info: null),
-        label: 'group.hkdf(base,salt=chatId)',
-      );
-      add(
-        await _deriveHkdfFlexible(groupBaseKey, salt: null, info: chatIdBytes),
-        label: 'group.hkdf(base,info=chatId)',
-      );
-      add(
-        _blake2bDigest(groupBaseKey, key: chatSalt, outputLength: 32),
-        label: 'group.blake(base|salt=chatId)',
-      );
-
-      if (parts.length >= 2 && parts[1].isNotEmpty) {
-        final scopedContext = '${parts[0]}:${parts[1]}';
-        final scopedBytes = Uint8List.fromList(utf8.encode(scopedContext));
-        final scopedSalt = _blake2bDigest(scopedBytes, outputLength: 32);
-
-        add(
-          await _legacyShaDerive(groupBaseKey, scopedContext),
-          label: 'group.legacy.sha(type:id)',
-        );
-        add(
-          await _deriveHkdfFlexible(groupBaseKey, salt: scopedBytes, info: null),
-          label: 'group.hkdf(base,salt=type:id)',
-        );
-        add(
-          await _deriveHkdfFlexible(groupBaseKey, salt: null, info: scopedBytes),
-          label: 'group.hkdf(base,info=type:id)',
-        );
-        add(
-          _blake2bDigest(groupBaseKey, key: scopedSalt, outputLength: 32),
-          label: 'group.blake(base|salt=type:id)',
-        );
+      final epochOk = _groupEpochEndpointOk[chatId] == true;
+      if (epochOk && !hasEpochKey) {
+        debugPrint(
+            'XSEC-2: group/channel: epoch 200 without usable key, no legacy candidates');
+        return variants;
       }
+
+      // Протокольный fallback: если epoch недоступен, пробуем только legacy chat key.
+      if (!hasEpochKey) {
+        add(baseKey, label: 'group.legacy.chatKey');
+      }
+
+      return variants;
     }
 
     if (parts[0] == 'personal' && parts.length >= 3 && myPublicKey != null) {

@@ -245,8 +245,11 @@ class ChatModel {
 
   /// Получить отображаемое сообщение
   /// Для зашифрованных сообщений показываем плейсхолдер
+  /// Для пустых групп/каналов показываем "Группа создана"/"Канал создан"
   String get displayMessage {
     if (lastMessage == null || lastMessage!.isEmpty) {
+      if (isGroup) return 'Группа создана';
+      if (isChannel) return 'Канал создан';
       return '';
     }
 
