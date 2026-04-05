@@ -18,6 +18,7 @@ class CryptoService {
   static const String _keysStorageKey = 'xsec2_user_keys';
   static const String _chatKeysCacheKey = 'xsec2_chat_keys_cache';
   static const String _rootKeyContext = 'XSEC-2 root key';
+  static const bool _logKeyCandidates = false;
 
   final FlutterSecureStorage _storage;
   final ApiClient _apiClient;
@@ -39,6 +40,21 @@ class CryptoService {
 
   /// In-flight запросы epoch key-кандидатов (chatId → Future<keys>)
   final Map<String, Future<List<Uint8List>>> _groupEpochInFlight = {};
+
+  /// Кэш публичных ключей пользователей (userId → payload / null)
+  final Map<String, Map<String, dynamic>?> _userPublicKeyCache = {};
+
+  /// In-flight запросы публичных ключей пользователей
+  final Map<String, Future<Map<String, dynamic>?>> _userPublicKeyInFlight = {};
+
+  /// Кэш ECDH shared secret (theirPublicKeyHex → shared bytes)
+  final Map<String, Uint8List> _sharedSecretCache = {};
+
+  /// Последний успешный decrypt-ключ по чату (chatId → key)
+  final Map<String, Uint8List> _lastSuccessfulDecryptKey = {};
+
+  /// Кэш сгенерированных candidate keys для stable-чатов (favorites/personal)
+  final Map<String, List<Uint8List>> _candidateDecryptKeyCache = {};
 
   /// Наши ключи (загружаются при инициализации)
   Map<String, dynamic>? _userKeys;
@@ -129,6 +145,11 @@ class CryptoService {
     _groupEpochEndpointOk.clear();
     _legacyChatKeyInFlight.clear();
     _groupEpochInFlight.clear();
+    _userPublicKeyCache.clear();
+    _userPublicKeyInFlight.clear();
+    _sharedSecretCache.clear();
+    _lastSuccessfulDecryptKey.clear();
+    _candidateDecryptKeyCache.clear();
     _sessionBlobRootKey = null;
   }
 
@@ -146,6 +167,16 @@ class CryptoService {
 
   /// Загружает публичные ключи пользователя с сервера
   Future<Map<String, dynamic>?> fetchUserPublicKey(String userId) async {
+    if (_userPublicKeyCache.containsKey(userId)) {
+      return _userPublicKeyCache[userId];
+    }
+
+    final inFlight = _userPublicKeyInFlight[userId];
+    if (inFlight != null) {
+      return await inFlight;
+    }
+
+    final future = () async {
     try {
       final response = await _apiClient.get(
         '/xsec2/keys/$userId/',
@@ -156,16 +187,27 @@ class CryptoService {
       if (response.statusCode == 200 && response.data != null) {
         final data = response.data as Map<String, dynamic>;
         if (data['success'] == true) {
+          _userPublicKeyCache[userId] = data;
           return data;
         }
       } else if (response.statusCode == 404) {
         debugPrint('XSEC-2: User key not found for userId=$userId');
+        _userPublicKeyCache[userId] = null;
         return null;
       }
     } catch (e) {
       debugPrint('XSEC-2: Error fetching user public key: $e');
     }
+    _userPublicKeyCache[userId] = null;
     return null;
+    }();
+
+    _userPublicKeyInFlight[userId] = future;
+    try {
+      return await future;
+    } finally {
+      _userPublicKeyInFlight.remove(userId);
+    }
   }
 
   /// Загружает наш зашифрованный ключевой бандл с сервера
@@ -668,6 +710,12 @@ class CryptoService {
       throw StateError('User keys not initialized');
     }
 
+    final normalizedPublicKey = theirPublicKeyHex.trim().toLowerCase();
+    final cached = _sharedSecretCache[normalizedPublicKey];
+    if (cached != null) {
+      return cached;
+    }
+
     final myPrivateKeyHex = _userKeys!['x25519_private_key'] as String;
     debugPrint(
         'XSEC-2: _computeSharedSecret: myPrivKey=${myPrivateKeyHex.substring(0, 8)}...');
@@ -697,11 +745,13 @@ class CryptoService {
       );
       final sharedBytes =
           Uint8List.fromList(await sharedSecretKey.extractBytes());
+        _sharedSecretCache[normalizedPublicKey] = sharedBytes;
       debugPrint(
           'XSEC-2: _computeSharedSecret: sharedSecret computed (cryptography.X25519)');
       return sharedBytes;
     } catch (_) {
       final sharedSecret = x25519.X25519(myPrivateKey, theirPublicKey);
+        _sharedSecretCache[normalizedPublicKey] = sharedSecret;
       debugPrint(
           'XSEC-2: _computeSharedSecret: sharedSecret computed (x25519 fallback)');
       return sharedSecret;
@@ -1121,6 +1171,15 @@ class CryptoService {
         return null;
       }
 
+      final fastKey = _lastSuccessfulDecryptKey[chatId];
+      if (fastKey != null) {
+        final fastResult =
+            await _tryDecryptWithSingleKey(encryptedData, fastKey, chatId);
+        if (fastResult != null) {
+          return fastResult;
+        }
+      }
+
       debugPrint('XSEC-2: encryptedData.length=${encryptedData.length}');
 
       // Определяем формат по длине
@@ -1136,6 +1195,7 @@ class CryptoService {
             chatId: chatId,
           );
           if (result != null) {
+            _lastSuccessfulDecryptKey[chatId] = candidateKeys[index];
             debugPrint(
                 'XSEC-2: AES-GCM decrypted with key variant #$index: $result');
             return result;
@@ -1147,6 +1207,7 @@ class CryptoService {
             chatId: chatId,
           );
           if (chachaResult != null) {
+            _lastSuccessfulDecryptKey[chatId] = candidateKeys[index];
             debugPrint(
                 'XSEC-2: ChaCha20-Poly1305 decrypted with key variant #$index: $chachaResult');
             return chachaResult;
@@ -1163,6 +1224,7 @@ class CryptoService {
             chatId: chatId,
           );
           if (result != null) {
+            _lastSuccessfulDecryptKey[chatId] = candidateKeys[index];
             debugPrint(
                 'XSEC-2: XChaCha20 decrypted with key variant #$index: $result');
             return result;
@@ -1523,6 +1585,22 @@ class CryptoService {
 
   Future<List<Uint8List>> _candidateDecryptKeys(
       String chatId, Uint8List baseKey) async {
+    final parts = chatId.split('_');
+    if (parts.isEmpty) return <Uint8List>[];
+
+    final isStableChat = parts[0] == 'favorites' || parts[0] == 'personal';
+    if (isStableChat && _candidateDecryptKeyCache.containsKey(chatId)) {
+      final cached = _candidateDecryptKeyCache[chatId]!;
+      final ordered = <Uint8List>[];
+      final fastKey = _lastSuccessfulDecryptKey[chatId];
+      if (fastKey != null) {
+        ordered.add(fastKey);
+      }
+      ordered.add(baseKey);
+      ordered.addAll(cached);
+      return _dedupeKeys(ordered);
+    }
+
     final variants = <Uint8List>[];
 
     void add(Uint8List key, {String? label}) {
@@ -1530,16 +1608,13 @@ class CryptoService {
       final fingerprint = _bytesToHex(key);
       if (variants.any((k) => _bytesToHex(k) == fingerprint)) return;
       variants.add(key);
-      if (label != null) {
+      if (_logKeyCandidates && label != null) {
         final preview = fingerprint.length >= 12
             ? fingerprint.substring(0, 12)
             : fingerprint;
         debugPrint('XSEC-2: key candidate [$label] fp=$preview...');
       }
     }
-
-    final parts = chatId.split('_');
-    if (parts.isEmpty) return variants;
 
     if (parts[0] == 'group' || parts[0] == 'channel') {
       var hasEpochKey = false;
@@ -1563,7 +1638,7 @@ class CryptoService {
         add(baseKey, label: 'group.legacy.chatKey');
       }
 
-      return variants;
+      return _dedupeKeys(variants);
     }
 
     if (parts[0] == 'personal' && parts.length >= 3 && myPublicKey != null) {
@@ -1930,7 +2005,48 @@ class CryptoService {
       } catch (_) {}
     }
 
-    return variants;
+    final deduped = _dedupeKeys(variants);
+    if (isStableChat) {
+      _candidateDecryptKeyCache[chatId] = deduped;
+    }
+    return deduped;
+  }
+
+  List<Uint8List> _dedupeKeys(List<Uint8List> keys) {
+    final unique = <Uint8List>[];
+    final seen = <String>{};
+
+    for (final key in keys) {
+      if (key.length != 32) continue;
+      final fingerprint = _bytesToHex(key);
+      if (seen.add(fingerprint)) {
+        unique.add(key);
+      }
+    }
+
+    return unique;
+  }
+
+  Future<String?> _tryDecryptWithSingleKey(
+    Uint8List encryptedData,
+    Uint8List key,
+    String chatId,
+  ) async {
+    if (encryptedData.length >= 28) {
+      final aes = await _decryptAesGcm(encryptedData, key, chatId: chatId);
+      if (aes != null) return aes;
+
+      final chacha =
+          await _decryptChaCha20Poly1305(encryptedData, key, chatId: chatId);
+      if (chacha != null) return chacha;
+    }
+
+    if (encryptedData.length >= 40) {
+      final xchacha = await _decryptXChaCha20(encryptedData, key, chatId: chatId);
+      if (xchacha != null) return xchacha;
+    }
+
+    return null;
   }
 
   Future<Uint8List> _deriveHkdf(

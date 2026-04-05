@@ -55,15 +55,17 @@ class ChatModel {
       }
     }
 
-    // Безопасная проверка для avatar
-    String? avatar;
-    if (avatarUrl != null) {
-      avatar = avatarUrl;
-    } else if (json['avatar'] is String) {
-      avatar = json['avatar'] as String;
-    } else if (json['image'] is String) {
-      avatar = json['image'] as String;
-    }
+  // Безопасная проверка для avatar
+  String? avatar;
+  if (avatarUrl != null) {
+    avatar = avatarUrl;
+  } else if (json['avatar_url'] is String) {
+    avatar = json['avatar_url'] as String;
+  } else if (json['avatar'] is String) {
+    avatar = json['avatar'] as String;
+  } else if (json['image'] is String) {
+    avatar = json['image'] as String;
+  }
 
     // Градиент аватара для групп/каналов (из корня JSON)
     if (avatarGrad == null && json['avatar_gradient'] is String) {
@@ -130,15 +132,36 @@ class ChatModel {
       isEncrypted = _isEncryptedMessage(lastMsg);
     }
 
+    // Извлекаем время последнего сообщения из разных возможных полей.
+    // Важно: не останавливаемся на первом поле, если оно не распарсилось.
+    DateTime? lastMsgTime;
+
+    final candidates = <dynamic>[
+      json['last_message_time'],
+      if (json['last_message'] is Map)
+        (json['last_message'] as Map<String, dynamic>)['timestamp'] ??
+            (json['last_message'] as Map<String, dynamic>)['created_at'] ??
+            (json['last_message'] as Map<String, dynamic>)['time'] ??
+            (json['last_message'] as Map<String, dynamic>)['sent_at'],
+      json['last_message_timestamp'],
+      json['last_activity'],
+    ];
+
+    for (final candidate in candidates) {
+      final parsed = _parseApiDateTime(candidate);
+      if (parsed != null) {
+        lastMsgTime = parsed;
+        break;
+      }
+    }
+
     return ChatModel(
       id: chatId,
       name: chatName,
       avatar: avatar,
       avatarGradient: avatarGrad,
       lastMessage: lastMsg,
-      lastMessageTime: json['last_message_time'] != null
-          ? DateTime.tryParse(json['last_message_time'].toString())
-          : null,
+      lastMessageTime: lastMsgTime,
       unreadCount: json['unread_count'] ?? json['unreadCount'] ?? 0,
       isGroup: isGroup,
       isChannel: isChannel,
@@ -181,7 +204,9 @@ class ChatModel {
         return '${lastMessageTime!.day}.${lastMessageTime!.month}';
       }
     } catch (e) {
-      return '';
+      final h = lastMessageTime!.hour.toString().padLeft(2, '0');
+      final m = lastMessageTime!.minute.toString().padLeft(2, '0');
+      return '$h:$m';
     }
   }
 
@@ -259,5 +284,43 @@ class ChatModel {
     }
 
     return lastMessage!;
+  }
+
+  static DateTime? _parseApiDateTime(dynamic value) {
+    if (value == null) return null;
+
+    if (value is DateTime) {
+      return value.isUtc ? value.toLocal() : value;
+    }
+
+    if (value is int) {
+      // Поддержка unix timestamp в секундах и миллисекундах.
+      final isMilliseconds = value > 100000000000;
+      final dateTime = isMilliseconds
+          ? DateTime.fromMillisecondsSinceEpoch(value, isUtc: true)
+          : DateTime.fromMillisecondsSinceEpoch(value * 1000, isUtc: true);
+      return dateTime.toLocal();
+    }
+
+    if (value is double) {
+      return _parseApiDateTime(value.toInt());
+    }
+
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return null;
+
+      final parsedStringDate = DateTime.tryParse(trimmed);
+      if (parsedStringDate != null) {
+        return parsedStringDate.isUtc ? parsedStringDate.toLocal() : parsedStringDate;
+      }
+
+      final numericValue = int.tryParse(trimmed);
+      if (numericValue != null) {
+        return _parseApiDateTime(numericValue);
+      }
+    }
+
+    return null;
   }
 }

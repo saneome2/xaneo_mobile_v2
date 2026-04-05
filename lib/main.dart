@@ -14,8 +14,15 @@ import 'services/crypto/crypto_service.dart';
 import 'services/crypto/xsec2_service.dart';
 import 'styles/app_styles.dart';
 
-void main() {
+import 'services/database/app_database.dart';
+import 'services/chat/chat_local_repository.dart';
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Инициализируем локальную зашифрованную БД
+  final appDb = await AppDatabase.getInstance();
+  final localChatRepo = LocalChatRepository(appDb);
   
   // Устанавливаем чёрный статус-бар
   SystemChrome.setSystemUIOverlayStyle(
@@ -27,12 +34,14 @@ void main() {
     ),
   );
   
-  runApp(const XaneoApp());
+  runApp(XaneoApp(localChatRepo: localChatRepo));
 }
 
 /// Точка входа в приложение Xaneo
 class XaneoApp extends StatelessWidget {
-  const XaneoApp({super.key});
+  final LocalChatRepository localChatRepo;
+  
+  const XaneoApp({super.key, required this.localChatRepo});
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +62,8 @@ class XaneoApp extends StatelessWidget {
 
     return MultiProvider(
       providers: [
+        // Локальная зашифрованная БД чатов
+        Provider<LocalChatRepository>.value(value: localChatRepo),
         // ApiClient для всех экранов
         Provider<ApiClient>.value(value: apiClient),
         // CryptoService для расшифровки сообщений

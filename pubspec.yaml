@@ -59,11 +59,18 @@ dependencies:
   cryptography: ^2.7.2
   x25519: ^0.1.1
   argon2: ^1.0.1
+  drift: ^2.32.1
+  sqlcipher_flutter_libs: ^0.7.0+eol
+  path_provider: ^2.1.5
+  path: ^1.9.1
+  web_socket_channel: ^3.0.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.1
+  drift_dev: ^2.32.1
+  build_runner: ^2.13.1
 
 flutter:
   uses-material-design: true
