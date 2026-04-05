@@ -45,11 +45,8 @@ class ChatWebSocketService {
     debugPrint('WS: connecting to $safeUri');
 
     try {
-      final customClient = _buildDebugHttpClientForSelfSigned(uri);
-      _channel = IOWebSocketChannel.connect(
-        uri,
-        customClient: customClient,
-      );
+      final socket = await _openSocketWithFallback(uri);
+      _channel = IOWebSocketChannel(socket);
       _subscription = _channel!.stream.listen(
         _handleRawEvent,
         onError: (error) {
@@ -66,6 +63,31 @@ class ChatWebSocketService {
     } catch (e) {
       debugPrint('WS: connect error: $e');
       _scheduleReconnect();
+    }
+  }
+
+  Future<WebSocket> _openSocketWithFallback(Uri uri) async {
+    final customClient = _buildDebugHttpClientForSelfSigned(uri);
+
+    try {
+      return await WebSocket.connect(
+        uri.toString(),
+        customClient: customClient,
+      );
+    } catch (e) {
+      final isIpHost = InternetAddress.tryParse(uri.host) != null;
+      final isTlsCertIssue = e.toString().contains('CERTIFICATE_VERIFY_FAILED');
+
+      if (kDebugMode && isIpHost && uri.scheme == 'wss' && isTlsCertIssue) {
+        final fallbackUri = uri.replace(scheme: 'ws');
+        final safeFallbackUri =
+            fallbackUri.replace(queryParameters: {'token': '***'});
+        debugPrint('WS: TLS handshake failed, fallback to $safeFallbackUri');
+
+        return await WebSocket.connect(fallbackUri.toString());
+      }
+
+      rethrow;
     }
   }
 

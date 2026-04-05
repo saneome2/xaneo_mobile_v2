@@ -908,8 +908,7 @@ class CryptoService {
       final epochOk = _groupEpochEndpointOk[chatId] == true;
       if (epochOk) {
         debugPrint(
-            'XSEC-2: group/channel: epoch endpoint responded 200 but no usable epoch key, skip legacy fallback');
-        return null;
+            'XSEC-2: group/channel: epoch endpoint responded 200 but no usable key, trying legacy fallback');
       }
 
       return await _fetchLegacyChatKey(chatId);
@@ -988,7 +987,7 @@ class CryptoService {
         }
       }
 
-      void collectFromDynamic(dynamic node) {
+      Future<void> collectFromDynamic(dynamic node) async {
         if (node == null) return;
 
         if (node is String) {
@@ -999,7 +998,7 @@ class CryptoService {
 
         if (node is List) {
           for (final item in node) {
-            collectFromDynamic(item);
+            await collectFromDynamic(item);
           }
           return;
         }
@@ -1013,6 +1012,10 @@ class CryptoService {
           'key',
           'chat_key',
           'encryption_key',
+          'usable_key',
+          'derived_epoch_key',
+          'decrypted_epoch_key',
+          'segment_key',
         ];
 
         for (final field in directFields) {
@@ -1031,10 +1034,51 @@ class CryptoService {
           'epochs',
           'keys',
           'items',
+          'segment_key_distribution',
+          'epoch_key_distribution',
+          'distribution',
+          'segments',
+          'segment_keys',
+          'member_keys',
+          'recipients',
+          'payload',
+          'value',
         ];
         for (final field in nestedFields) {
           if (map.containsKey(field)) {
-            collectFromDynamic(map[field]);
+            await collectFromDynamic(map[field]);
+          }
+        }
+
+        final distributionKey =
+            await _tryExtractGroupEpochKeyFromDistribution(chatId, map);
+        if (distributionKey != null) {
+          add(distributionKey, label: 'group.distribution.derived');
+        }
+
+        // Heuristic: для distribution-структур берём значения всех string-полей,
+        // похожих на ключ (hex/base64 длиной >= 32 bytes после decode).
+        for (final entry in map.entries) {
+          final keyName = entry.key.toLowerCase();
+          final value = entry.value;
+          final isPublicKeyField = keyName.contains('public_key') ||
+              keyName.contains('sender_public');
+          if (isPublicKeyField) continue;
+
+          final looksLikeKeyField = keyName.contains('key') ||
+              keyName.contains('secret') ||
+              keyName.contains('segment') ||
+              keyName.contains('epoch');
+
+          if (!looksLikeKeyField) continue;
+
+          if (value is String) {
+            final decoded = _decodeServerKey(value);
+            if (decoded != null) {
+              add(decoded, label: entry.key);
+            }
+          } else {
+            await collectFromDynamic(value);
           }
         }
       }
@@ -1062,7 +1106,10 @@ class CryptoService {
             continue;
           }
 
-          collectFromDynamic(response.data);
+          await collectFromDynamic(response.data);
+          if (variants.isNotEmpty) {
+            break;
+          }
         } catch (_) {}
       }
 
@@ -1099,6 +1146,186 @@ class CryptoService {
     if (b64 != null && b64.length == 32) {
       return b64;
     }
+
+    return null;
+  }
+
+  Future<Uint8List?> _tryExtractGroupEpochKeyFromDistribution(
+    String chatId,
+    Map<String, dynamic> node,
+  ) async {
+    Map<String, dynamic>? asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return value.cast<String, dynamic>();
+      return null;
+    }
+
+    final segmentDistribution = asMap(node['segment_key_distribution']);
+    final epochDistribution = asMap(node['epoch_key_distribution']);
+    if (segmentDistribution == null || epochDistribution == null) {
+      return null;
+    }
+
+    final encryptedSegmentBytes =
+        _decodeOpaqueBytes(segmentDistribution['encrypted_segment_key']);
+    final segmentNonce = _decodeOpaqueBytes(segmentDistribution['nonce']);
+    final senderPublicKey = segmentDistribution['sender_public_key']?.toString();
+
+    final encryptedEpochBytes =
+        _decodeOpaqueBytes(epochDistribution['encrypted_epoch_key']);
+    final epochNonce = _decodeOpaqueBytes(epochDistribution['nonce']);
+
+    if (encryptedSegmentBytes == null ||
+        segmentNonce == null ||
+        senderPublicKey == null ||
+        senderPublicKey.isEmpty ||
+        encryptedEpochBytes == null ||
+        epochNonce == null) {
+      return null;
+    }
+
+    final senderPubBytes = _decodeOpaqueBytes(senderPublicKey);
+    if (senderPubBytes == null || senderPubBytes.length != 32) {
+      return null;
+    }
+
+    final shared = await _computeSharedSecret(senderPublicKey);
+    final sharedSha = await crypto.Sha256()
+        .hash(shared)
+        .then((h) => Uint8List.fromList(h.bytes));
+    final root = await _deriveRootKey(shared);
+    final chatSalt = _blake2bDigest(Uint8List.fromList(utf8.encode(chatId)));
+    final sharedBlake = _blake2bDigest(shared, key: chatSalt);
+
+    final legacyChatKey = await _fetchLegacyChatKey(chatId);
+
+    final segmentKeyCandidates = <Uint8List>[
+      shared,
+      root,
+      sharedSha,
+      sharedBlake,
+      if (legacyChatKey != null) legacyChatKey,
+    ];
+
+    for (final segmentDecryptKey in _dedupeKeys(segmentKeyCandidates)) {
+      final segmentMaterial = await _tryDecryptOpaquePayload(
+        encryptedSegmentBytes,
+        segmentNonce,
+        segmentDecryptKey,
+      );
+
+      final segmentKey = _normalizeDecryptedKeyMaterial(segmentMaterial);
+      if (segmentKey == null) continue;
+
+      final epochMaterial = await _tryDecryptOpaquePayload(
+        encryptedEpochBytes,
+        epochNonce,
+        segmentKey,
+      );
+
+      final epochKey = _normalizeDecryptedKeyMaterial(epochMaterial);
+      if (epochKey != null) {
+        debugPrint('XSEC-2: group epoch distribution decrypt success for $chatId');
+        return epochKey;
+      }
+    }
+
+    return null;
+  }
+
+  Uint8List? _decodeOpaqueBytes(dynamic rawValue) {
+    if (rawValue == null) return null;
+    final raw = rawValue.toString().trim();
+    if (raw.isEmpty) return null;
+
+    final isHex = RegExp(r'^[0-9a-fA-F]+$').hasMatch(raw) && raw.length.isEven;
+    if (isHex) {
+      try {
+        return _hexToBytes(raw);
+      } catch (_) {}
+    }
+
+    return _normalizeBase64Decode(raw);
+  }
+
+  Future<Uint8List?> _tryDecryptOpaquePayload(
+    Uint8List encryptedBytes,
+    Uint8List nonce,
+    Uint8List key,
+  ) async {
+    const tagLen = 16;
+    if (encryptedBytes.length <= tagLen || key.length != 32) return null;
+
+    final ciphertext = encryptedBytes.sublist(0, encryptedBytes.length - tagLen);
+    final tag = encryptedBytes.sublist(encryptedBytes.length - tagLen);
+    final secretKey = crypto.SecretKey(key);
+
+    try {
+      if (nonce.length == 24) {
+        final xchacha20 = crypto.Xchacha20.poly1305Aead();
+        final box = crypto.SecretBox(ciphertext, nonce: nonce, mac: crypto.Mac(tag));
+        final decrypted = await xchacha20.decrypt(box, secretKey: secretKey);
+        return Uint8List.fromList(decrypted);
+      }
+    } catch (_) {}
+
+    try {
+      if (nonce.length == 12) {
+        final aesGcm = crypto.AesGcm.with256bits();
+        final box = crypto.SecretBox(ciphertext, nonce: nonce, mac: crypto.Mac(tag));
+        final decrypted = await aesGcm.decrypt(box, secretKey: secretKey);
+        return Uint8List.fromList(decrypted);
+      }
+    } catch (_) {}
+
+    // fallback: некоторые payload кладут 24-byte nonce, а использовали AES-GCM с head/tail
+    if (nonce.length >= 12) {
+      final aesGcm = crypto.AesGcm.with256bits();
+      for (final candidateNonce in [
+        nonce.sublist(0, 12),
+        nonce.sublist(nonce.length - 12),
+      ]) {
+        try {
+          final box = crypto.SecretBox(
+            ciphertext,
+            nonce: candidateNonce,
+            mac: crypto.Mac(tag),
+          );
+          final decrypted = await aesGcm.decrypt(box, secretKey: secretKey);
+          return Uint8List.fromList(decrypted);
+        } catch (_) {}
+      }
+    }
+
+    return null;
+  }
+
+  Uint8List? _normalizeDecryptedKeyMaterial(Uint8List? material) {
+    if (material == null || material.isEmpty) return null;
+
+    if (material.length == 32) {
+      return Uint8List.fromList(material);
+    }
+
+    final parsedMap = _tryParseJsonMap(material);
+    if (parsedMap != null) {
+      final dynamic nestedCandidate = parsedMap['key'] ??
+          parsedMap['epoch_key'] ??
+          parsedMap['segment_key'] ??
+          parsedMap['server_epoch_key'] ??
+          parsedMap['encryption_key'];
+
+      final nested = _decodeServerKey(nestedCandidate?.toString() ?? '');
+      if (nested != null) return nested;
+    }
+
+    try {
+      final decodedText = utf8.decode(material).trim();
+      if (decodedText.isEmpty) return null;
+
+      final direct = _decodeServerKey(decodedText);
+      if (direct != null) return direct;
+    } catch (_) {}
 
     return null;
   }
@@ -1629,11 +1856,10 @@ class CryptoService {
       final epochOk = _groupEpochEndpointOk[chatId] == true;
       if (epochOk && !hasEpochKey) {
         debugPrint(
-            'XSEC-2: group/channel: epoch 200 without usable key, no legacy candidates');
-        return variants;
+            'XSEC-2: group/channel: epoch 200 without usable key, add legacy/base key candidates');
       }
 
-      // Протокольный fallback: если epoch недоступен, пробуем только legacy chat key.
+      // Fallback: если epoch ключа нет, обязательно пробуем baseKey (обычно legacy chat key).
       if (!hasEpochKey) {
         add(baseKey, label: 'group.legacy.chatKey');
       }
