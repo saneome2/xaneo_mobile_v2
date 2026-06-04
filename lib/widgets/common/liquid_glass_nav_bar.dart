@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../styles/app_styles.dart';
 
 /// Навигационная панель с эффектом "Liquid Glass"
@@ -71,7 +72,7 @@ class LiquidGlassNavBar extends StatelessWidget {
                           children: [
                             Expanded(
                               child: _NavItem(
-                                icon: Icons.chat_bubble_rounded,
+                                icon: FontAwesomeIcons.solidComment,
                                 label: 'Чаты',
                                 isSelected: selectedIndex == 0,
                                 onTap: () => onDestinationSelected(0),
@@ -79,7 +80,7 @@ class LiquidGlassNavBar extends StatelessWidget {
                             ),
                             Expanded(
                               child: _NavItem(
-                                icon: Icons.people_alt_rounded,
+                                icon: FontAwesomeIcons.users,
                                 label: 'Контакты',
                                 isSelected: selectedIndex == 1,
                                 onTap: () => onDestinationSelected(1),
@@ -87,7 +88,7 @@ class LiquidGlassNavBar extends StatelessWidget {
                             ),
                             Expanded(
                               child: _NavItem(
-                                icon: Icons.settings_rounded,
+                                icon: FontAwesomeIcons.gear,
                                 label: 'Настройки',
                                 isSelected: selectedIndex == 2,
                                 onTap: () => onDestinationSelected(2),
@@ -124,7 +125,7 @@ class LiquidGlassNavBar extends StatelessWidget {
 
 /// Элемент навигационной панели
 class _NavItem extends StatelessWidget {
-  final IconData icon;
+  final FaIconData icon;
   final String label;
   final bool isSelected;
   final VoidCallback onTap;
@@ -149,7 +150,7 @@ class _NavItem extends StatelessWidget {
             AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeOutCubic,
-              child: Icon(
+              child: FaIcon(
                 icon,
                 size: isSelected ? 24 : 22,
                 color: isSelected

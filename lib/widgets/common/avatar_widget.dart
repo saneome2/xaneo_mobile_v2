@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../config/app_config.dart';
 import '../../styles/app_styles.dart';
 
@@ -28,7 +29,7 @@ class AvatarWidget extends StatelessWidget {
   final double? borderRadius;
 
   /// Иконка для отображения (например, звезда для избранного)
-  final IconData? icon;
+  final FaIconData? icon;
 
   const AvatarWidget({
     super.key,
@@ -91,7 +92,7 @@ class AvatarWidget extends StatelessWidget {
       child: showInitialsWithGradient
           ? Center(
               child: (icon != null)
-                  ? Icon(
+                  ? FaIcon(
                       icon,
                       color: Colors.white,
                       size: size * 0.5,

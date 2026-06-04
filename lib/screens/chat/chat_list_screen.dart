@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../../models/chat/chat_model.dart';
 import '../../services/api/api_client.dart';
@@ -11,6 +12,7 @@ import '../../services/chat/chat_websocket_service.dart';
 import '../../services/crypto/crypto_service.dart';
 import '../../styles/app_styles.dart';
 import '../../widgets/common/avatar_widget.dart';
+import 'chat_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -363,13 +365,13 @@ class _ChatListScreenState extends State<ChatListScreen>
                 Text('Чаты', style: AppStyles.titleLarge),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.search, color: AppStyles.textPrimaryColor),
+                  icon: const FaIcon(FontAwesomeIcons.magnifyingGlass, color: AppStyles.textPrimaryColor, size: 16),
                   onPressed: () {
                     // TODO: Поиск
                   },
                 ),
                 IconButton(
-                  icon: const Icon(Icons.add, color: AppStyles.textPrimaryColor),
+                  icon: const FaIcon(FontAwesomeIcons.plus, color: AppStyles.textPrimaryColor, size: 18),
                   onPressed: () {
                     // TODO: Новый чат
                   },
@@ -406,9 +408,9 @@ class _ChatListScreenState extends State<ChatListScreen>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(
-                  Icons.error_outline,
-                  size: 64,
+                const FaIcon(
+                  FontAwesomeIcons.circleExclamation,
+                  size: 50,
                   color: AppStyles.errorColor,
                 ),
                 const SizedBox(height: 16),
@@ -433,9 +435,9 @@ class _ChatListScreenState extends State<ChatListScreen>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(
-                  Icons.chat_bubble_outline,
-                  size: 64,
+                const FaIcon(
+                  FontAwesomeIcons.message,
+                  size: 50,
                   color: AppStyles.textMutedColor,
                 ),
                 const SizedBox(height: 16),
@@ -493,7 +495,11 @@ class _ChatListScreenState extends State<ChatListScreen>
       color: Colors.transparent,
       child: InkWell(
         onTap: () {
-          // TODO: Открыть чат
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => ChatScreen(chat: chat),
+            ),
+          );
         },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -512,9 +518,9 @@ class _ChatListScreenState extends State<ChatListScreen>
                       children: [
                         // Иконка для группы/канала
                         if (chat.isGroup || chat.isChannel) ...[
-                          Icon(
-                            chat.isGroup ? Icons.group : Icons.campaign,
-                            size: 14,
+                          FaIcon(
+                            chat.isGroup ? FontAwesomeIcons.users : FontAwesomeIcons.bullhorn,
+                            size: 11,
                             color: AppStyles.textMutedColor,
                           ),
                           const SizedBox(width: 4),
@@ -588,7 +594,7 @@ class _ChatListScreenState extends State<ChatListScreen>
       (chat.avatar!.startsWith('http') || chat.avatar!.startsWith('https'));
 
   // Для Избранного показываем иконку закладки (bookmark)
-  final icon = chat.isFavorites ? Icons.bookmark_rounded : null;
+  final icon = chat.isFavorites ? FontAwesomeIcons.solidBookmark : null;
 
   // Используем AvatarWidget с градиентом
   return AvatarWidget(

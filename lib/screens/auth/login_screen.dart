@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../../config/app_config.dart';
 import '../../models/auth/recent_account.dart';
@@ -174,6 +175,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   @override
   Widget build(BuildContext context) {
     final isLoading = context.watch<AuthProvider>().isLoading;
+    final showRecentOnly = _currentStep == 0 && _showRecentAccounts && (_isLoadingRecentAccounts || _recentAccounts.isNotEmpty);
     
     return Scaffold(
       backgroundColor: AppStyles.backgroundColor,
@@ -182,13 +184,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         elevation: 0,
         leading: _currentStep == 1 
           ? IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+              icon: const FaIcon(FontAwesomeIcons.chevronLeft, color: Colors.white, size: 18),
               onPressed: isLoading ? null : _goBack,
             )
           : null,
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white70),
+            icon: const FaIcon(FontAwesomeIcons.gear, color: Colors.white70, size: 18),
             onPressed: () => AuthSettingsModal.show(context),
           ),
         ],
@@ -205,7 +207,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   'assets/images/logo.png',
                   height: 60,
                   width: 60,
-                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.bubble_chart, color: Colors.white, size: 60),
+                  errorBuilder: (context, error, stackTrace) => const Center(child: FaIcon(FontAwesomeIcons.comments, color: Colors.white, size: 50)),
                 ),
               ),
               const Spacer(flex: 1),
@@ -226,35 +228,37 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   );
                 },
                 child: _currentStep == 0 
-                  ? _buildUsernameStep(key: const ValueKey('step0'))
+                  ? _buildUsernameStep(key: const ValueKey('step0'), showRecentOnly: showRecentOnly)
                   : _buildPasswordStep(key: const ValueKey('step1')),
               ),
               const SizedBox(height: 32),
-              _buildProgressIndicator(),
+              if (!showRecentOnly) _buildProgressIndicator(),
               const Spacer(flex: 2),
               
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: isLoading 
-                    ? null 
-                    : ((_currentStep == 0 && _isUsernameValid) || (_currentStep == 1 && _isPasswordValid))
-                        ? _goToNextStep
-                        : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppStyles.buttonBackgroundColor,
-                    disabledBackgroundColor: Colors.white24,
-                    foregroundColor: AppStyles.buttonTextColor,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    elevation: 0,
+              if (!showRecentOnly) ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: isLoading 
+                      ? null 
+                      : ((_currentStep == 0 && _isUsernameValid) || (_currentStep == 1 && _isPasswordValid))
+                          ? _goToNextStep
+                          : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppStyles.buttonBackgroundColor,
+                      disabledBackgroundColor: Colors.white24,
+                      foregroundColor: AppStyles.buttonTextColor,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      elevation: 0,
+                    ),
+                    child: isLoading 
+                      ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2))
+                      : Text(_currentStep == 0 ? 'Далее' : 'Войти', style: AppStyles.buttonText),
                   ),
-                  child: isLoading 
-                    ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2))
-                    : Text(_currentStep == 0 ? 'Далее' : 'Войти', style: AppStyles.buttonText),
                 ),
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
+              ],
               
               if (_currentStep == 0)
                 Center(
@@ -279,34 +283,55 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildUsernameStep({Key? key}) {
+  Widget _buildUsernameStep({Key? key, required bool showRecentOnly}) {
     return Column(
       key: key,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('С возвращением', style: AppStyles.titleGiant),
         const SizedBox(height: 8),
-        const Text('Введите ваш никнейм', style: AppStyles.bodyMuted),
-        const SizedBox(height: 32),
-        TextField(
-          controller: _usernameController,
-          focusNode: _usernameFocusNode,
-          style: AppStyles.inputText,
-          cursorColor: Colors.white,
-          decoration: const InputDecoration(
-            hintText: 'Никнейм',
-            hintStyle: AppStyles.inputHint,
-            border: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
-            contentPadding: EdgeInsets.symmetric(vertical: 16),
-          ),
-          onSubmitted: (_) => _goToNextStep(),
+        Text(
+          showRecentOnly 
+            ? (_isLoadingRecentAccounts ? 'Загрузка...' : 'Выберите аккаунт для входа') 
+            : 'Введите ваш никнейм', 
+          style: AppStyles.bodyMuted
         ),
-        // Недавние аккаунты
-        if (_showRecentAccounts && _recentAccounts.isNotEmpty) ...[
-          const SizedBox(height: 24),
+        const SizedBox(height: 32),
+        
+        if (showRecentOnly) ...[
           _buildRecentAccounts(),
+          if (!_isLoadingRecentAccounts) ...[
+            const SizedBox(height: 32),
+            Center(
+              child: TextButton(
+                onPressed: () {
+                  setState(() {
+                    _showRecentAccounts = false;
+                  });
+                  Future.delayed(AppStyles.animationFast, () {
+                    if (mounted) _usernameFocusNode.requestFocus();
+                  });
+                },
+                child: Text('Войти в другой аккаунт', style: AppStyles.bodyMedium.copyWith(color: Colors.white)),
+              ),
+            ),
+          ],
+        ] else ...[
+          TextField(
+            controller: _usernameController,
+            focusNode: _usernameFocusNode,
+            style: AppStyles.inputText,
+            cursorColor: Colors.white,
+            decoration: const InputDecoration(
+              hintText: 'Никнейм',
+              hintStyle: AppStyles.inputHint,
+              border: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+              enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+              focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
+              contentPadding: EdgeInsets.symmetric(vertical: 16),
+            ),
+            onSubmitted: (_) => _goToNextStep(),
+          ),
         ],
       ],
     );
@@ -362,17 +387,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 80,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: _recentAccounts.length > 5 ? 5 : _recentAccounts.length,
-            itemBuilder: (context, index) {
-              final account = _recentAccounts[index];
-              return _buildRecentAccountItem(account);
-            },
-          ),
+        const SizedBox(height: 16),
+        Column(
+          children: _recentAccounts.take(4).map((account) => _buildRecentAccountItem(account)).toList(),
         ),
       ],
     );
@@ -383,25 +400,50 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     return GestureDetector(
       onTap: () => _handleQuickLogin(account),
       child: Container(
-        width: 72,
-        margin: const EdgeInsets.only(right: 12),
-        child: Column(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.05)),
+        ),
+        child: Row(
           children: [
             AvatarWidget(
               avatar: account.avatar,
               avatarGradient: account.avatarGradient,
               hasAvatar: account.hasAvatar,
               username: account.username,
-              size: 48,
+              size: 44,
             ),
-            const SizedBox(height: 8),
-            Text(
-              '@${account.username}',
-              style: AppStyles.bodyMuted.copyWith(fontSize: 11),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '@${account.username}',
+                    style: AppStyles.bodyMedium.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (account.email.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      account.email,
+                      style: AppStyles.bodyMuted.copyWith(fontSize: 12),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
             ),
+            const FaIcon(FontAwesomeIcons.chevronRight, color: Colors.white24, size: 14),
           ],
         ),
       ),

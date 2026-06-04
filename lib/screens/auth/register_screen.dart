@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
@@ -524,12 +525,12 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+          icon: const FaIcon(FontAwesomeIcons.chevronLeft, color: Colors.white, size: 18),
           onPressed: isLoading ? null : _goBack,
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white70),
+            icon: const FaIcon(FontAwesomeIcons.gear, color: Colors.white70, size: 18),
             onPressed: () => AuthSettingsModal.show(context),
           ),
         ],
@@ -546,7 +547,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
                   'assets/images/logo.png',
                   height: 48,
                   width: 48,
-                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.bubble_chart, color: Colors.white, size: 48),
+                  errorBuilder: (context, error, stackTrace) => const Center(child: FaIcon(FontAwesomeIcons.comments, color: Colors.white, size: 40)),
                 ),
               ),
               const Spacer(flex: 1),
@@ -665,7 +666,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
             suffixIcon: _isCheckingUsername
                 ? const SizedBox(width: 20, height: 20, child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white54)))
                 : _isUsernameAvailable && _usernameController.text.length >= AppConfig.minUsernameLength
-                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    ? const FaIcon(FontAwesomeIcons.circleCheck, color: Colors.green, size: 16)
                     : null,
             errorText: _usernameError,
             errorStyle: const TextStyle(color: Colors.red),
@@ -690,7 +691,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
           children: [
             Expanded(child: Text('Ваш Email', style: AppStyles.titleGiant)),
             IconButton(
-              icon: const Icon(Icons.info_outline, color: Colors.white54),
+              icon: const FaIcon(FontAwesomeIcons.circleInfo, color: Colors.white54, size: 18),
               onPressed: _showEmailInfoModal,
             ),
           ],
@@ -714,7 +715,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
             suffixIcon: _isCheckingEmail
                 ? const SizedBox(width: 20, height: 20, child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white54)))
                 : _isEmailAvailable && _emailController.text.contains('@')
-                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    ? const FaIcon(FontAwesomeIcons.circleCheck, color: Colors.green, size: 16)
                     : null,
             errorText: _emailError,
             errorStyle: const TextStyle(color: Colors.red),
@@ -854,9 +855,9 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
             focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
             contentPadding: const EdgeInsets.symmetric(vertical: 16),
             suffixIcon: _isPasswordConfirmValid
-                ? const Icon(Icons.check_circle, color: Colors.green)
+                ? const FaIcon(FontAwesomeIcons.circleCheck, color: Colors.green, size: 16)
                 : _passwordConfirmController.text.isNotEmpty && !_isPasswordConfirmValid
-                    ? const Icon(Icons.error, color: Colors.red)
+                    ? const FaIcon(FontAwesomeIcons.circleExclamation, color: Colors.red, size: 16)
                     : null,
           ),
           onSubmitted: (_) => _isStepValid() ? _goToNextStep() : null,
@@ -1002,7 +1003,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
                     : null,
               ),
               child: _selectedAvatarImage == null
-                  ? const Icon(Icons.add_a_photo_outlined, color: Colors.white70, size: 40)
+                  ? const FaIcon(FontAwesomeIcons.camera, color: Colors.white70, size: 34)
                   : null,
             ),
           ),
@@ -1042,7 +1043,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
                       : null,
                 ),
                 child: _selectedAvatarImage == null
-                    ? const Icon(Icons.person, color: Colors.white, size: 40)
+                    ? const FaIcon(FontAwesomeIcons.user, color: Colors.white, size: 34)
                     : null,
               ),
               const SizedBox(height: 16),

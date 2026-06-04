@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../styles/app_styles.dart';
 
 class AuthSettingsModal extends StatefulWidget {
@@ -53,22 +54,22 @@ class _AuthSettingsModalState extends State<AuthSettingsModal> {
             const SizedBox(height: 24),
             
             _buildSettingItem(
-              icon: Icons.dark_mode_outlined,
+              icon: FontAwesomeIcons.moon,
               title: 'Темная тема',
               subtitle: 'Включена (по умолчанию)',
-              trailing: const Icon(Icons.check, color: Colors.white),
+              trailing: const FaIcon(FontAwesomeIcons.check, color: Colors.white, size: 14),
             ),
             const Divider(color: Colors.white10),
             
             _buildSettingItem(
-              icon: Icons.language,
+              icon: FontAwesomeIcons.language,
               title: 'Язык',
               subtitle: 'Русский',
             ),
             const Divider(color: Colors.white10),
             
             _buildSettingItem(
-              icon: Icons.security,
+              icon: FontAwesomeIcons.shield,
               title: 'Сетевой фильтр',
               subtitle: 'Включен',
             ),
@@ -87,7 +88,7 @@ class _AuthSettingsModalState extends State<AuthSettingsModal> {
   }
 
   Widget _buildSettingItem({
-    required IconData icon,
+    required FaIconData icon,
     required String title,
     required String subtitle,
     Widget? trailing,
@@ -103,7 +104,7 @@ class _AuthSettingsModalState extends State<AuthSettingsModal> {
               color: Colors.white10,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: Colors.white70),
+            child: Center(child: FaIcon(icon, color: Colors.white70, size: 18)),
           ),
           const SizedBox(width: 16),
           Expanded(

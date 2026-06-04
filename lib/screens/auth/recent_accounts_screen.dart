@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../../models/auth/recent_account.dart';
 import '../../providers/auth_provider.dart';
@@ -122,7 +123,7 @@ class _RecentAccountsScreenState extends State<RecentAccountsScreen> {
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white70),
+            icon: const FaIcon(FontAwesomeIcons.gear, color: Colors.white70, size: 18),
             onPressed: () {
               // TODO: Открыть настройки
             },
@@ -141,10 +142,12 @@ class _RecentAccountsScreenState extends State<RecentAccountsScreen> {
                   'assets/images/logo.png',
                   height: 60,
                   width: 60,
-                  errorBuilder: (context, error, stackTrace) => const Icon(
-                    Icons.bubble_chart,
-                    color: Colors.white,
-                    size: 60,
+                  errorBuilder: (context, error, stackTrace) => const Center(
+                    child: FaIcon(
+                      FontAwesomeIcons.comments,
+                      color: Colors.white,
+                      size: 50,
+                    ),
                   ),
                 ),
               ),
@@ -342,10 +345,10 @@ class _AccountCard extends StatelessWidget {
                     ),
                   )
                 else
-                  const Icon(
-                    Icons.arrow_forward_ios,
+                  const FaIcon(
+                    FontAwesomeIcons.chevronRight,
                     color: Colors.white54,
-                    size: 16,
+                    size: 14,
                   ),
               ],
             ),

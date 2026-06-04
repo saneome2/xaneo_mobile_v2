@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../../config/app_config.dart';
 import '../../providers/auth_provider.dart';
@@ -192,9 +193,9 @@ class _TfaScreenState extends State<TfaScreen>
           borderRadius: BorderRadius.circular(40),
           border: Border.all(color: AppStyles.borderColor, width: 1),
         ),
-        child: const Icon(
-          Icons.security,
-          size: 40,
+        child: const FaIcon(
+          FontAwesomeIcons.shieldHalved,
+          size: 34,
           color: AppStyles.textPrimaryColor,
         ),
       ),

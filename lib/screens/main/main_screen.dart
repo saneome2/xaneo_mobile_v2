@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../../models/auth/user_model.dart';
 import '../../providers/auth_provider.dart';
@@ -89,7 +90,7 @@ class _MainScreenState extends State<MainScreen> {
                 Text('Контакты', style: AppStyles.titleLarge),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.person_add, color: AppStyles.textPrimaryColor),
+                  icon: const FaIcon(FontAwesomeIcons.userPlus, color: AppStyles.textPrimaryColor, size: 16),
                   onPressed: () {
                     // TODO: Добавить контакт
                   },
@@ -104,9 +105,9 @@ class _MainScreenState extends State<MainScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.people_outline,
-                    size: 64,
+                  FaIcon(
+                    FontAwesomeIcons.users,
+                    size: 50,
                     color: AppStyles.textMutedColor,
                   ),
                   const SizedBox(height: 16),
@@ -141,19 +142,19 @@ class _MainScreenState extends State<MainScreen> {
           // Секция аккаунта
           _buildSection('Аккаунт', [
             _buildItem(
-              icon: Icons.lock_outline,
+              icon: FontAwesomeIcons.lock,
               title: 'Безопасность',
               subtitle: 'Пароль, 2FA',
               onTap: () {},
             ),
             _buildItem(
-              icon: Icons.notifications_outlined,
+              icon: FontAwesomeIcons.bell,
               title: 'Уведомления',
               subtitle: 'Push, звуки',
               onTap: () {},
             ),
             _buildItem(
-              icon: Icons.privacy_tip_outlined,
+              icon: FontAwesomeIcons.shield,
               title: 'Приватность',
               subtitle: 'Данные, контакты',
               isLast: true,
@@ -166,19 +167,19 @@ class _MainScreenState extends State<MainScreen> {
           // Секция приложения
           _buildSection('Приложение', [
             _buildItem(
-              icon: Icons.dark_mode_outlined,
+              icon: FontAwesomeIcons.moon,
               title: 'Тема',
               subtitle: 'Тёмная',
               onTap: () {},
             ),
             _buildItem(
-              icon: Icons.translate,
+              icon: FontAwesomeIcons.language,
               title: 'Язык',
               subtitle: 'Русский',
               onTap: () {},
             ),
             _buildItem(
-              icon: Icons.storage_outlined,
+              icon: FontAwesomeIcons.database,
               title: 'Хранилище',
               subtitle: 'Кэш, данные',
               isLast: true,
@@ -191,12 +192,12 @@ class _MainScreenState extends State<MainScreen> {
           // Секция поддержки
           _buildSection('Поддержка', [
             _buildItem(
-              icon: Icons.help_outline,
+              icon: FontAwesomeIcons.circleQuestion,
               title: 'Справка',
               onTap: () {},
             ),
             _buildItem(
-              icon: Icons.info_outline,
+              icon: FontAwesomeIcons.circleInfo,
               title: 'О приложении',
               subtitle: 'Версия 2.0.0',
               isLast: true,
@@ -327,7 +328,7 @@ class _MainScreenState extends State<MainScreen> {
 
   /// Элемент настройки
   Widget _buildItem({
-    required IconData icon,
+    required FaIconData icon,
     required String title,
     String? subtitle,
     bool isLast = false,
@@ -355,7 +356,7 @@ class _MainScreenState extends State<MainScreen> {
           child: Row(
             children: [
               // Иконка
-              Icon(
+              FaIcon(
                 icon,
                 color: const Color(0xFFAAAAAA),
                 size: 20,
@@ -392,10 +393,10 @@ class _MainScreenState extends State<MainScreen> {
               ),
 
               // Chevron
-              const Icon(
-                Icons.chevron_right_rounded,
+              const FaIcon(
+                FontAwesomeIcons.chevronRight,
                 color: Color(0xFF444444),
-                size: 18,
+                size: 12,
               ),
             ],
           ),

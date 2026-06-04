@@ -24,6 +24,27 @@ class LocalChatRepository {
         .watch();
   }
 
+  /// Получение сообщений конкретного чата по его строковому serverChatId
+  Stream<List<Message>> watchMessagesForServerChat(String serverChatId) {
+    final query = _db.select(_db.messages).join([
+      innerJoin(_db.chats, _db.chats.id.equalsExp(_db.messages.chatId))
+    ])
+      ..where(_db.chats.serverChatId.equals(serverChatId))
+      ..orderBy([OrderingTerm.desc(_db.messages.timestamp)]);
+
+    return query.watch().map((rows) {
+      return rows.map((row) => row.readTable(_db.messages)).toList();
+    });
+  }
+
+  /// Получение локального числового ID чата по его строковому serverChatId
+  Future<int?> getLocalChatId(String serverChatId) async {
+    final row = await (_db.select(_db.chats)
+          ..where((c) => c.serverChatId.equals(serverChatId)))
+        .getSingleOrNull();
+    return row?.id;
+  }
+
   Future<ChatModel?> getChatByServerId(String serverChatId) async {
     final row = await (_db.select(_db.chats)
           ..where((c) => c.serverChatId.equals(serverChatId)))

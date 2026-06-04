@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'providers/auth_provider.dart';
@@ -252,10 +253,12 @@ class SplashScreen extends StatelessWidget {
                 color: AppStyles.textPrimaryColor,
                 borderRadius: BorderRadius.circular(24),
               ),
-              child: const Icon(
-                Icons.chat_bubble_rounded,
-                size: 50,
-                color: AppStyles.backgroundColor,
+              child: const Center(
+                child: FaIcon(
+                  FontAwesomeIcons.solidComment,
+                  size: 44,
+                  color: AppStyles.backgroundColor,
+                ),
               ),
             ),
             const SizedBox(height: 32),

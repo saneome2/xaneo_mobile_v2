@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:flutter/rendering.dart';
 import 'dart:math' as math;
 import 'package:path_provider/path_provider.dart';
@@ -45,7 +46,7 @@ class _AvatarCropperState extends State<AvatarCropper> {
         backgroundColor: Colors.black,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white),
+          icon: const FaIcon(FontAwesomeIcons.xmark, color: Colors.white, size: 18),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: const Text('Редактирование', style: AppStyles.titleLarge),
@@ -57,7 +58,7 @@ class _AvatarCropperState extends State<AvatarCropper> {
                     height: 20, 
                     child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                   )
-                : const Icon(Icons.check, color: Colors.white),
+                : const FaIcon(FontAwesomeIcons.check, color: Colors.white, size: 18),
             onPressed: _isSaving ? null : _saveCroppedImage,
           ),
         ],
@@ -153,19 +154,19 @@ class _AvatarCropperState extends State<AvatarCropper> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 _buildToolButton(
-                  icon: Icons.rotate_left,
+                  icon: FontAwesomeIcons.rotateLeft,
                   onTap: () => setState(() => _rotation -= math.pi / 2),
                 ),
                 _buildToolButton(
-                  icon: Icons.rotate_right,
+                  icon: FontAwesomeIcons.rotateRight,
                   onTap: () => setState(() => _rotation += math.pi / 2),
                 ),
                 _buildToolButton(
-                  icon: Icons.flip,
+                  icon: FontAwesomeIcons.rightLeft,
                   onTap: () => setState(() => _flipHorizontal = !_flipHorizontal),
                 ),
                 _buildToolButton(
-                  icon: Icons.flip_camera_android,
+                  icon: FontAwesomeIcons.upDown,
                   onTap: () => setState(() => _flipVertical = !_flipVertical),
                 ),
               ],
@@ -219,10 +220,10 @@ class _AvatarCropperState extends State<AvatarCropper> {
     }
   }
 
-  Widget _buildToolButton({required IconData icon, required VoidCallback onTap}) {
+  Widget _buildToolButton({required FaIconData icon, required VoidCallback onTap}) {
     return IconButton(
       onPressed: onTap,
-      icon: Icon(icon, color: Colors.white, size: 28),
+      icon: FaIcon(icon, color: Colors.white, size: 22),
       padding: const EdgeInsets.all(12),
       constraints: const BoxConstraints(),
     );
