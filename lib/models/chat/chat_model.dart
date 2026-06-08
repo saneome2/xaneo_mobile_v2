@@ -155,6 +155,40 @@ class ChatModel {
       }
     }
 
+    final Map<String, dynamic> otherUserMap = json['other_user'] is Map 
+        ? Map<String, dynamic>.from(json['other_user'] as Map)
+        : <String, dynamic>{};
+
+    if (isGroup) {
+      if (json['members_count'] != null) {
+        otherUserMap['members_count'] = json['members_count'];
+      } else if (json['membersCount'] != null) {
+        otherUserMap['members_count'] = json['membersCount'];
+      } else if (json['member_count'] != null) {
+        otherUserMap['members_count'] = json['member_count'];
+      }
+      
+      if (json['online_count'] != null) {
+        otherUserMap['online_count'] = json['online_count'];
+      } else if (json['onlineCount'] != null) {
+        otherUserMap['online_count'] = json['onlineCount'];
+      } else if (json['online_members_count'] != null) {
+        otherUserMap['online_count'] = json['online_members_count'];
+      }
+    } else if (isChannel) {
+      if (json['subscribers_count'] != null) {
+        otherUserMap['subscribers_count'] = json['subscribers_count'];
+      } else if (json['subscribersCount'] != null) {
+        otherUserMap['subscribers_count'] = json['subscribersCount'];
+      } else if (json['subscriber_count'] != null) {
+        otherUserMap['subscribers_count'] = json['subscriber_count'];
+      } else if (json['members_count'] != null) {
+        otherUserMap['subscribers_count'] = json['members_count'];
+      } else if (json['membersCount'] != null) {
+        otherUserMap['subscribers_count'] = json['membersCount'];
+      }
+    }
+
     return ChatModel(
       id: chatId,
       name: chatName,
@@ -168,7 +202,7 @@ class ChatModel {
       isPersonal: isPersonal,
       isFavorites: isFavorites,
       isEncrypted: isEncrypted,
-      otherUser: json['other_user'] is Map ? json['other_user'] as Map<String, dynamic> : null,
+      otherUser: otherUserMap.isNotEmpty ? otherUserMap : null,
     );
   }
 

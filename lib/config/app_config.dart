@@ -9,7 +9,7 @@ class AppConfig {
 
   /// Базовый URL API сервера
   /// TODO: Изменить на продакшн перед релизом
-  static const String apiBaseUrl = 'https://192.168.3.65/api/v1';
+  static const String apiBaseUrl = 'https://10.58.33.31/api/v1';
   
   /// Таймаут для API запросов
   static const Duration apiTimeout = Duration(seconds: 30);

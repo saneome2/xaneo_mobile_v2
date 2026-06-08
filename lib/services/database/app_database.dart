@@ -29,11 +29,13 @@ class AppDatabase extends _$AppDatabase {
     final keyService = DatabaseKeyService();
     final encryptionKey = await keyService.getEncryptionKey();
 
-    _instance = AppDatabase._(NativeDatabase(
+    _instance = AppDatabase._(NativeDatabase.createInBackground(
       file,
       setup: (db) {
         // Устанавливаем ключ для SQLCipher при открытии БД
         db.execute("PRAGMA key = '$encryptionKey';");
+        // Включаем WAL-режим для параллельного чтения и записи
+        db.execute("PRAGMA journal_mode = WAL;");
       },
     ));
     
@@ -42,4 +44,23 @@ class AppDatabase extends _$AppDatabase {
 
   @override
   int get schemaVersion => 1;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) async {
+          await m.createAll();
+        },
+        onUpgrade: (m, from, to) async {
+          // Выполняется при обновлении версии схемы
+        },
+        beforeOpen: (details) async {
+          // Создаем композитный индекс для оптимизации сортировки и выборки сообщений в чате
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp ON messages (chat_id, timestamp DESC);',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_chats_last_message_time ON chats (last_message_time DESC);',
+          );
+        },
+      );
 }

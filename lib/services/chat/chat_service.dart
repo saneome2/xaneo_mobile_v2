@@ -1,4 +1,4 @@
-import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import '../../config/app_config.dart';
 import '../../models/chat/chat_model.dart';
 import '../api/api_client.dart';
@@ -30,8 +30,51 @@ class ChatService {
       return [];
     } catch (e) {
       // Логируем ошибку
-      print('Error fetching chats: $e');
+      debugPrint('Error fetching chats: $e');
       return [];
+    }
+  }
+
+  /// Получить список зашифрованных сообщений для конкретного чата с пагинацией (limit/offset)
+  Future<Map<String, dynamic>?> getEncryptedMessages(
+    String chatId, {
+    int limit = 20,
+    int offset = 0,
+  }) async {
+    try {
+      final response = await _apiClient.get(
+        '/encrypted-messages/',
+        queryParameters: {
+          'chat_id': chatId,
+          'limit': limit,
+          'offset': offset,
+        },
+      );
+      
+      if (response.statusCode == 200 && response.data != null) {
+        if (response.data is Map) {
+          return response.data as Map<String, dynamic>;
+        }
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error fetching encrypted messages for chat $chatId: $e');
+      return null;
+    }
+  }
+
+  /// Отметить сообщения в чате как прочитанные
+  Future<bool> markMessagesAsRead(String chatId) async {
+    try {
+      final response = await _apiClient.post(
+        '/messages/mark-read/',
+        data: {'chat_id': chatId},
+      );
+      
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Error marking messages as read for chat $chatId: $e');
+      return false;
     }
   }
 }

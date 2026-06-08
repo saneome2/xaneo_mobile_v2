@@ -783,9 +783,8 @@ class CryptoService {
       final parts = chatId.split('_');
       final currentUserId = await _getCurrentUserId();
       if (parts.length >= 3 && currentUserId != null && currentUserId.isNotEmpty) {
-        final otherUserId = parts[1] == currentUserId ? parts[2] : parts[1];
         final sharedSecret = await _computeSharedSecret(theirPublicKey);
-        return _derivePersonalWebKey(sharedSecret, currentUserId, otherUserId);
+        return _derivePersonalWebKey(sharedSecret, chatId);
       }
 
       final sharedSecret = await _computeSharedSecret(theirPublicKey);
@@ -809,18 +808,14 @@ class CryptoService {
   }
 
   /// Web-деривация ключа personal:
-  /// context = personal:<minUserId>:<maxUserId>
-  /// salt = blake2b(context, 32)
+  /// Веб-клиент передаёт chatId как есть (например "personal_1_4") в deriveSaltFromContext.
+  /// salt = blake2b(chatId, 32)
   /// key = blake2b(shared, key=salt, 32)
   Uint8List _derivePersonalWebKey(
     Uint8List sharedSecret,
-    String userA,
-    String userB,
+    String chatId,
   ) {
-    final sorted = [userA, userB]..sort();
-    final context = Uint8List.fromList(
-      utf8.encode('personal:${sorted[0]}:${sorted[1]}'),
-    );
+    final context = Uint8List.fromList(utf8.encode(chatId));
     final salt = _blake2bDigest(context, outputLength: 32);
     return _blake2bDigest(sharedSecret, key: salt, outputLength: 32);
   }
@@ -1877,7 +1872,7 @@ class CryptoService {
           if (theirPub != null && theirPub.isNotEmpty) {
             final shared = await _computeSharedSecret(theirPub);
             add(
-              _derivePersonalWebKey(shared, currentUserId, otherUserId),
+              _derivePersonalWebKey(shared, chatId),
               label: 'personal.web.exact(blake2b)',
             );
           }

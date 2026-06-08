@@ -24,13 +24,17 @@ class LocalChatRepository {
         .watch();
   }
 
-  /// Получение сообщений конкретного чата по его строковому serverChatId
-  Stream<List<Message>> watchMessagesForServerChat(String serverChatId) {
+  /// Получение сообщений конкретного чата по его строковому serverChatId с возможностью лимита
+  Stream<List<Message>> watchMessagesForServerChat(String serverChatId, {int? limit}) {
     final query = _db.select(_db.messages).join([
       innerJoin(_db.chats, _db.chats.id.equalsExp(_db.messages.chatId))
     ])
       ..where(_db.chats.serverChatId.equals(serverChatId))
       ..orderBy([OrderingTerm.desc(_db.messages.timestamp)]);
+
+    if (limit != null) {
+      query.limit(limit);
+    }
 
     return query.watch().map((rows) {
       return rows.map((row) => row.readTable(_db.messages)).toList();
@@ -76,14 +80,48 @@ class LocalChatRepository {
 
   /// Сохранение сообщения
   Future<int> saveMessage(MessagesCompanion message) {
-    return _db.into(_db.messages).insertOnConflictUpdate(message);
+    return _db.into(_db.messages).insert(
+      message,
+      onConflict: DoUpdate(
+        (old) => message,
+        target: [_db.messages.serverMessageId],
+      ),
+    );
   }
 
   /// Пакетное сохранение сообщений (полезно при загрузке истории)
   Future<void> saveMessagesBatch(List<MessagesCompanion> messages) async {
+    if (messages.isEmpty) return;
     await _db.batch((batch) {
-      batch.insertAllOnConflictUpdate(_db.messages, messages);
+      for (final msg in messages) {
+        batch.insert(
+          _db.messages,
+          msg,
+          onConflict: DoUpdate(
+            (old) => msg,
+            target: [_db.messages.serverMessageId],
+          ),
+        );
+      }
     });
+  }
+
+  /// Получение количества сообщений в чате по его локальному числовому ID
+  Future<int> getMessageCount(int chatId) async {
+    final countExpr = _db.messages.id.count();
+    final query = _db.selectOnly(_db.messages)
+      ..addColumns([countExpr])
+      ..where(_db.messages.chatId.equals(chatId));
+    final row = await query.getSingle();
+    return row.read(countExpr) ?? 0;
+  }
+
+  /// Получение списка сообщений по их серверным ID (для оптимизации расшифровки)
+  Future<List<Message>> getMessagesByServerIds(List<String> serverIds) {
+    if (serverIds.isEmpty) return Future.value([]);
+    return (_db.select(_db.messages)
+          ..where((m) => m.serverMessageId.isIn(serverIds)))
+        .get();
   }
 
   ChatModel _mapChatToModel(Chat row) {

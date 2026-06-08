@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
@@ -77,8 +78,9 @@ class ChatWebSocketService {
     } catch (e) {
       final isIpHost = InternetAddress.tryParse(uri.host) != null;
       final isTlsCertIssue = e.toString().contains('CERTIFICATE_VERIFY_FAILED');
+      final isPrivate = _isPrivateIp(uri.host);
 
-      if (kDebugMode && isIpHost && uri.scheme == 'wss' && isTlsCertIssue) {
+      if ((!kReleaseMode || isPrivate) && isIpHost && uri.scheme == 'wss' && isTlsCertIssue) {
         final fallbackUri = uri.replace(scheme: 'ws');
         final safeFallbackUri =
             fallbackUri.replace(queryParameters: {'token': '***'});
@@ -121,9 +123,9 @@ class ChatWebSocketService {
     final shouldUseInsecureWs = apiUri.scheme != 'https';
     final wsScheme = shouldUseInsecureWs ? 'ws' : 'wss';
 
-    if (kDebugMode && isIpHost && apiUri.scheme == 'https') {
+    if (!kReleaseMode && isIpHost && apiUri.scheme == 'https') {
       debugPrint(
-        'WS: debug mode with IP host detected, using debug TLS bypass for self-signed certificate',
+        'WS: debug/profile mode with IP host detected, using debug TLS bypass for self-signed certificate',
       );
     }
 
@@ -139,7 +141,7 @@ class ChatWebSocketService {
   }
 
   HttpClient? _buildDebugHttpClientForSelfSigned(Uri uri) {
-    if (!kDebugMode) return null;
+    if (kReleaseMode && !_isPrivateIp(uri.host)) return null;
 
     final isIpHost = InternetAddress.tryParse(uri.host) != null;
     if (uri.scheme != 'wss' || !isIpHost) return null;
@@ -150,10 +152,26 @@ class ChatWebSocketService {
       String host,
       int port,
     ) {
-      debugPrint('WS: accepting self-signed cert in debug for $host:$port');
+      debugPrint('WS: accepting self-signed cert in debug/profile/local for $host:$port');
       return true;
     };
     return client;
+  }
+
+  bool _isPrivateIp(String host) {
+    if (host == 'localhost' || host == '127.0.0.1') return true;
+    final address = InternetAddress.tryParse(host);
+    if (address == null) return false;
+
+    if (address.type == InternetAddressType.IPv4) {
+      final parts = host.split('.').map(int.tryParse).toList();
+      if (parts.length == 4 && parts[0] != null) {
+        if (parts[0] == 10) return true;
+        if (parts[0] == 192 && parts[1] == 168) return true;
+        if (parts[0] == 172 && parts[1] != null && parts[1]! >= 16 && parts[1]! <= 31) return true;
+      }
+    }
+    return false;
   }
 
   void _handleRawEvent(dynamic raw) {
@@ -176,8 +194,10 @@ class ChatWebSocketService {
     _reconnectAttempt += 1;
 
     final exponent = _reconnectAttempt > 6 ? 6 : _reconnectAttempt;
-    final delay = Duration(seconds: 1 << exponent);
-    debugPrint('WS: reconnect in ${delay.inSeconds}s (attempt $_reconnectAttempt)');
+    final baseDelaySeconds = 1 << exponent;
+    final jitterMs = Random().nextInt(1000); // random jitter between 0 and 999ms to prevent reconnect storms
+    final delay = Duration(milliseconds: baseDelaySeconds * 1000 + jitterMs);
+    debugPrint('WS: reconnect in ${baseDelaySeconds}s + ${jitterMs}ms (attempt $_reconnectAttempt)');
 
     _reconnectTimer = Timer(delay, () {
       final chatId = _activeChatId;
