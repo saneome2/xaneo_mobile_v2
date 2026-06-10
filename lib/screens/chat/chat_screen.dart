@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui';
 
+import 'package:url_launcher/url_launcher.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
 
+import '../../config/app_config.dart';
 import '../../models/chat/chat_model.dart';
 import '../../models/auth/user_model.dart';
 import '../../providers/auth_provider.dart';
@@ -51,9 +55,33 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _hasMoreMessages = true;
   int _limit = 20;
 
+  // Typing state variables (sending)
+  bool _isTyping = false;
+  Timer? _typingRepeatTimer;
+  Timer? _typingStopTimer;
+
+  // Typing state variables (receiving)
+  String? _typingText;
+  Timer? _typingTimer;
+  String? _activeLottiePath;
+  String? _jwtToken;
+  final Map<String, String> _typingUsers = {};
+  final Map<String, String> _typingLottiePaths = {};
+  final Map<String, Timer> _typingTimers = {};
+
+  Future<void> _loadJwtToken() async {
+    final token = await TokenStorage().getAccessToken();
+    if (mounted) {
+      setState(() {
+        _jwtToken = token;
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _loadJwtToken();
     _otherUser = widget.chat.otherUser != null ? Map<String, dynamic>.from(widget.chat.otherUser!) : null;
     _localChatRepo = context.read<LocalChatRepository>();
     _chatService = ChatService(apiClient: context.read<ApiClient>());
@@ -61,18 +89,76 @@ class _ChatScreenState extends State<ChatScreen> {
     _chatWebSocketService = ChatWebSocketService(tokenStorage: TokenStorage());
 
     _scrollController.addListener(_scrollListener);
+    _messageController.addListener(_onTextChanged);
     _initChat();
   }
 
   @override
   void dispose() {
     _scrollController.removeListener(_scrollListener);
+    _messageController.removeListener(_onTextChanged);
     _wsEventsSub?.cancel();
     _chatWebSocketService.dispose();
     _messageController.dispose();
     _messageFocusNode.dispose();
     _scrollController.dispose();
+
+    _typingRepeatTimer?.cancel();
+    _typingStopTimer?.cancel();
+    _typingTimer?.cancel();
+    for (final timer in _typingTimers.values) {
+      timer.cancel();
+    }
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    final text = _messageController.text;
+    if (text.isNotEmpty) {
+      _startTypingState();
+    } else {
+      _stopTypingState();
+    }
+  }
+
+  void _sendTypingEvent(bool isTypingNow, {String action = 'typing'}) {
+    _chatWebSocketService.send({
+      'type': 'typing',
+      'is_typing': isTypingNow,
+      'action': action,
+    });
+  }
+
+  void _startTypingState() {
+    if (_isTyping) {
+      _typingStopTimer?.cancel();
+      _typingStopTimer = Timer(const Duration(seconds: 2), _stopTypingState);
+      return;
+    }
+
+    _isTyping = true;
+    _sendTypingEvent(true);
+
+    _typingRepeatTimer?.cancel();
+    _typingRepeatTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (_isTyping) {
+        _sendTypingEvent(true);
+      }
+    });
+
+    _typingStopTimer?.cancel();
+    _typingStopTimer = Timer(const Duration(seconds: 2), _stopTypingState);
+  }
+
+  void _stopTypingState() {
+    if (!_isTyping) return;
+    _isTyping = false;
+    _sendTypingEvent(false);
+
+    _typingRepeatTimer?.cancel();
+    _typingRepeatTimer = null;
+    _typingStopTimer?.cancel();
+    _typingStopTimer = null;
   }
 
   void _scrollListener() {
@@ -171,11 +257,44 @@ class _ChatScreenState extends State<ChatScreen> {
 
           String? decrypted;
           if (existingMap.containsKey(msgId)) {
-            decrypted = existingMap[msgId];
+            final existingText = existingMap[msgId] ?? '';
+            if (cryptoService.isEncryptedMessage(existingText) && encryptedText.isNotEmpty) {
+              decrypted = await cryptoService.decryptChatMessage(encryptedText, widget.chat.id);
+              await Future.delayed(Duration.zero);
+            } else {
+              decrypted = existingText;
+            }
           } else if (encryptedText.isNotEmpty) {
             decrypted = await cryptoService.decryptChatMessage(encryptedText, widget.chat.id);
             // Yield event loop to prevent UI stutter during heavy decryption loop
             await Future.delayed(Duration.zero);
+          }
+
+          String? fileInfoJson;
+          if (decrypted != null && decrypted.trim().startsWith('{')) {
+            try {
+              final parsed = jsonDecode(decrypted);
+              if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice') && parsed['file_id'] != null) {
+                fileInfoJson = decrypted;
+              }
+            } catch (_) {}
+          }
+
+          if (fileInfoJson == null) {
+            final fileId = item['attached_file_id']?.toString();
+            if (fileId != null) {
+              final fileName = item['attached_file_name']?.toString() ?? 'file';
+              final fileSize = item['attached_file_size'] as int? ?? 0;
+              final fileType = item['attached_file_type']?.toString() ?? 'application/octet-stream';
+              final fileUrlSuffix = item['attached_file_url']?.toString() ?? '/api/files/download/$fileId/';
+              fileInfoJson = jsonEncode({
+                'file_id': fileId,
+                'file_name': fileName,
+                'file_size': fileSize,
+                'mime_type': fileType,
+                'file_url': fileUrlSuffix,
+              });
+            }
           }
 
           companions.add(
@@ -185,6 +304,7 @@ class _ChatScreenState extends State<ChatScreen> {
               senderId: Value(senderId),
               textContent: Value(decrypted ?? encryptedText),
               timestamp: Value(timestamp),
+              fileUrl: Value(fileInfoJson),
             ),
           );
         }
@@ -272,11 +392,44 @@ class _ChatScreenState extends State<ChatScreen> {
 
           String? decrypted;
           if (existingMap.containsKey(msgId)) {
-            decrypted = existingMap[msgId];
+            final existingText = existingMap[msgId] ?? '';
+            if (cryptoService.isEncryptedMessage(existingText) && encryptedText.isNotEmpty) {
+              decrypted = await cryptoService.decryptChatMessage(encryptedText, widget.chat.id);
+              await Future.delayed(Duration.zero);
+            } else {
+              decrypted = existingText;
+            }
           } else if (encryptedText.isNotEmpty) {
             decrypted = await cryptoService.decryptChatMessage(encryptedText, widget.chat.id);
             // Yield event loop to prevent UI stutter during heavy decryption loop
             await Future.delayed(Duration.zero);
+          }
+
+          String? fileInfoJson;
+          if (decrypted != null && decrypted.trim().startsWith('{')) {
+            try {
+              final parsed = jsonDecode(decrypted);
+              if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice') && parsed['file_id'] != null) {
+                fileInfoJson = decrypted;
+              }
+            } catch (_) {}
+          }
+
+          if (fileInfoJson == null) {
+            final fileId = item['attached_file_id']?.toString();
+            if (fileId != null) {
+              final fileName = item['attached_file_name']?.toString() ?? 'file';
+              final fileSize = item['attached_file_size'] as int? ?? 0;
+              final fileType = item['attached_file_type']?.toString() ?? 'application/octet-stream';
+              final fileUrlSuffix = item['attached_file_url']?.toString() ?? '/api/files/download/$fileId/';
+              fileInfoJson = jsonEncode({
+                'file_id': fileId,
+                'file_name': fileName,
+                'file_size': fileSize,
+                'mime_type': fileType,
+                'file_url': fileUrlSuffix,
+              });
+            }
           }
 
           companions.add(
@@ -286,6 +439,7 @@ class _ChatScreenState extends State<ChatScreen> {
               senderId: Value(senderId),
               textContent: Value(decrypted ?? encryptedText),
               timestamp: Value(timestamp),
+              fileUrl: Value(fileInfoJson),
             ),
           );
         }
@@ -324,6 +478,99 @@ class _ChatScreenState extends State<ChatScreen> {
     // Handle server-side error responses
     if (type == 'error') {
       debugPrint('WS_ERROR: ${event['message']}');
+      return;
+    }
+
+    if (type == 'typing') {
+      final userId = event['user_id']?.toString() ?? '';
+      final eventIsTyping = event['is_typing'] == true;
+      final action = event['action']?.toString() ?? 'typing';
+      
+      String getActionText(String? action) {
+        switch (action) {
+          case 'recording_voice':
+            return 'записывает голосовое...';
+          case 'sending_photo':
+            return 'отправляет фото...';
+          case 'sending_video':
+            return 'отправляет видео...';
+          case 'sending_file':
+            return 'отправляет файл...';
+          case 'typing':
+          default:
+            return 'печатает...';
+        }
+      }
+
+      String getLottieAsset(String? action) {
+        switch (action) {
+          case 'recording_voice':
+            return 'assets/animations/recording_voice.json';
+          case 'sending_photo':
+            return 'assets/animations/sending_photo.json';
+          case 'sending_video':
+            return 'assets/animations/sending_video.json';
+          case 'sending_file':
+            return 'assets/animations/sending_file.json';
+          case 'typing':
+          default:
+            return 'assets/animations/typing.json';
+        }
+      }
+      
+      if (widget.chat.isPersonal) {
+        final otherId = _otherUser?['id']?.toString();
+        final otherUsername = _otherUser?['username']?.toString();
+        if (userId == otherId || event['username']?.toString() == otherUsername) {
+          if (eventIsTyping) {
+            setState(() {
+              _typingText = getActionText(action);
+              _activeLottiePath = getLottieAsset(action);
+            });
+            _typingTimer?.cancel();
+            _typingTimer = Timer(const Duration(seconds: 5), () {
+              if (mounted) {
+                setState(() {
+                  _typingText = null;
+                  _activeLottiePath = null;
+                });
+              }
+            });
+          } else {
+            setState(() {
+              _typingText = null;
+              _activeLottiePath = null;
+            });
+            _typingTimer?.cancel();
+          }
+        }
+      } else {
+        final name = event['first_name']?.toString() ?? event['username']?.toString() ?? 'Кто-то';
+        final actionText = getActionText(action);
+        final lottieAsset = getLottieAsset(action);
+        
+        if (eventIsTyping) {
+          setState(() {
+            _typingUsers[userId] = '$name $actionText';
+            _typingLottiePaths[userId] = lottieAsset;
+          });
+          _typingTimers[userId]?.cancel();
+          _typingTimers[userId] = Timer(const Duration(seconds: 5), () {
+            if (mounted) {
+              setState(() {
+                _typingUsers.remove(userId);
+                _typingLottiePaths.remove(userId);
+              });
+            }
+          });
+        } else {
+          setState(() {
+            _typingUsers.remove(userId);
+            _typingLottiePaths.remove(userId);
+          });
+          _typingTimers[userId]?.cancel();
+        }
+      }
       return;
     }
 
@@ -372,6 +619,33 @@ class _ChatScreenState extends State<ChatScreen> {
       final senderId = event['author_username']?.toString() ?? event['author_id']?.toString() ?? event['sender_id']?.toString() ?? 'system';
       final msgId = event['id']?.toString() ?? 'ws_${DateTime.now().millisecondsSinceEpoch}';
 
+      String? fileInfoJson;
+      if (decrypted != null && decrypted.trim().startsWith('{')) {
+        try {
+          final parsed = jsonDecode(decrypted);
+          if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice') && parsed['file_id'] != null) {
+            fileInfoJson = decrypted;
+          }
+        } catch (_) {}
+      }
+
+      if (fileInfoJson == null) {
+        final fileId = event['attached_file_id']?.toString();
+        if (fileId != null) {
+          final fileName = event['attached_file_name']?.toString() ?? 'file';
+          final fileSize = event['attached_file_size'] as int? ?? 0;
+          final fileType = event['attached_file_type']?.toString() ?? 'application/octet-stream';
+          final fileUrlSuffix = event['attached_file_url']?.toString() ?? '/api/files/download/$fileId/';
+          fileInfoJson = jsonEncode({
+            'file_id': fileId,
+            'file_name': fileName,
+            'file_size': fileSize,
+            'mime_type': fileType,
+            'file_url': fileUrlSuffix,
+          });
+        }
+      }
+
       await _localChatRepo.saveMessage(
         MessagesCompanion(
           serverMessageId: Value(msgId),
@@ -379,6 +653,7 @@ class _ChatScreenState extends State<ChatScreen> {
           senderId: Value(senderId),
           textContent: Value(decrypted ?? encryptedText),
           timestamp: Value(timestamp),
+          fileUrl: Value(fileInfoJson),
         ),
       );
 
@@ -842,7 +1117,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     
     final lastSeenVal = otherUser['last_seen'] ?? otherUser['last_login'] ?? otherUser['last_activity'];
-    if (lastSeenVal == null) return 'был(а) недавно';
+    if (lastSeenVal == null) return 'был(-а) недавно';
     
     DateTime? lastSeen;
     if (lastSeenVal is String) {
@@ -853,13 +1128,13 @@ class _ChatScreenState extends State<ChatScreen> {
       lastSeen = lastSeenVal;
     }
     
-    if (lastSeen == null) return 'был(а) недавно';
+    if (lastSeen == null) return 'был(-а) недавно';
     
     final now = DateTime.now();
     final difference = now.difference(lastSeen);
     
     if (difference.inMinutes < 1) {
-      return 'был(а) только что';
+      return 'был(-а) только что';
     }
     
     if (difference.inMinutes < 60) {
@@ -872,7 +1147,7 @@ class _ChatScreenState extends State<ChatScreen> {
       } else {
         minStr = 'минут';
       }
-      return 'был(а) в сети $mins $minStr назад';
+      return 'был(-а) в сети $mins $minStr назад';
     }
     
     final today = DateTime(now.year, now.month, now.day);
@@ -882,17 +1157,17 @@ class _ChatScreenState extends State<ChatScreen> {
     final minute = lastSeen.minute.toString().padLeft(2, '0');
     
     if (lastSeenDay == today) {
-      return 'был(а) в сети сегодня в $hour:$minute';
+      return 'был(-а) в сети сегодня в $hour:$minute';
     }
     
     final yesterday = today.subtract(const Duration(days: 1));
     if (lastSeenDay == yesterday) {
-      return 'был(а) в сети вчера в $hour:$minute';
+      return 'был(-а) в сети вчера в $hour:$minute';
     }
     
     final day = lastSeen.day.toString().padLeft(2, '0');
     final month = lastSeen.month.toString().padLeft(2, '0');
-    return 'был(а) в сети $day.$month.${lastSeen.year} в $hour:$minute';
+    return 'был(-а) в сети $day.$month.${lastSeen.year} в $hour:$minute';
   }
 
   Widget _buildAppBarSubtitle() {
@@ -903,24 +1178,37 @@ class _ChatScreenState extends State<ChatScreen> {
     String statusText = '';
     dynamic icon;
     Color color = const Color(0xE6A1A1AA); // light gray (~0.9 opacity)
+    String? lottiePath;
 
     if (widget.chat.isPersonal) {
       if (_isBot()) {
         statusText = 'бот';
         icon = FontAwesomeIcons.robot;
       } else {
-        statusText = _formatUserStatus(_otherUser);
-        if (statusText == 'в сети') {
-          color = const Color(0xE64ADE80); // green for online
+        if (_typingText != null) {
+          statusText = _typingText!;
+          color = const Color(0xFF38BDF8); // sky blue for typing
+          lottiePath = _activeLottiePath;
+        } else {
+          statusText = _formatUserStatus(_otherUser);
+          if (statusText == 'в сети') {
+            color = const Color(0xE64ADE80); // green for online
+          }
         }
       }
     } else if (widget.chat.isGroup) {
-      final membersCount = _otherUser?['members_count'] as int? ?? 0;
-      final onlineCount = _otherUser?['online_count'] as int? ?? 0;
-      
-      statusText = _pluralizeParticipants(membersCount);
-      if (onlineCount > 0) {
-        statusText += ', $onlineCount в сети';
+      if (_typingUsers.isNotEmpty) {
+        statusText = _typingUsers.values.join(', ');
+        color = const Color(0xFF38BDF8); // sky blue for typing
+        lottiePath = _typingLottiePaths.isNotEmpty ? _typingLottiePaths.values.first : null;
+      } else {
+        final membersCount = _otherUser?['members_count'] as int? ?? 0;
+        final onlineCount = _otherUser?['online_count'] as int? ?? 0;
+        
+        statusText = _pluralizeParticipants(membersCount);
+        if (onlineCount > 0) {
+          statusText += ', $onlineCount в сети';
+        }
       }
       icon = FontAwesomeIcons.users;
     } else if (widget.chat.isChannel) {
@@ -939,18 +1227,30 @@ class _ChatScreenState extends State<ChatScreen> {
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          if (icon != null) ...[
+          if (lottiePath != null) ...[
+            SizedBox(
+              height: 14,
+              child: ColorFiltered(
+                colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+                child: Lottie.asset(
+                  lottiePath,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+          ] else if (icon != null) ...[
             FaIcon(
               icon,
-              size: 9,
+              size: 11,
               color: color,
             ),
-            const SizedBox(width: 3),
+            const SizedBox(width: 4),
           ],
           Text(
             statusText,
             style: TextStyle(
-              fontSize: 8.5,
+              fontSize: 11,
               fontWeight: FontWeight.w500,
               color: color,
             ),
@@ -1022,11 +1322,17 @@ class _ChatScreenState extends State<ChatScreen> {
             }
             final msg = messages[index];
             final isMe = msg.senderId == currentUser?.username || msg.senderId == currentUser?.id.toString();
+            final senderRealName = isMe 
+              ? (currentUser?.username ?? 'Вы') 
+              : (widget.chat.isGroup ? msg.senderId : widget.chat.name);
+
             return MessageBubble(
               key: ValueKey(msg.serverMessageId),
               message: msg,
               isMe: isMe,
               currentUser: currentUser,
+              jwtToken: _jwtToken,
+              senderRealName: senderRealName,
             );
           },
         );
@@ -1593,16 +1899,19 @@ class MessageBubble extends StatelessWidget {
   final Message message;
   final bool isMe;
   final UserModel? currentUser;
+  final String? jwtToken;
+  final String senderRealName;
 
   const MessageBubble({
     super.key,
     required this.message,
     required this.isMe,
     required this.currentUser,
+    required this.jwtToken,
+    required this.senderRealName,
   });
 
   // ── Pre-cached constants ─────────────────────────────────────────
-  // These avoid creating new Color/TextStyle objects on every build frame.
   static const _myBubbleColor    = Color(0x1FFFFFFF);  // ~0.12 white
   static const _otherBubbleColor = Color(0x0AFFFFFF);  // ~0.04 white
   static const _borderColor      = Color(0x0DFFFFFF);  // ~0.05 white
@@ -1654,6 +1963,202 @@ class MessageBubble extends StatelessWidget {
     return '$h:$m';
   }
 
+  String _formatFileSize(int bytes) {
+    if (bytes <= 0) return '0 Б';
+    const suffixes = ['Б', 'КБ', 'МБ', 'ГБ'];
+    var i = 0;
+    double size = bytes.toDouble();
+    while (size >= 1024 && i < suffixes.length - 1) {
+      size /= 1024;
+      i++;
+    }
+    return '${size.toStringAsFixed(1)} ${suffixes[i]}';
+  }
+
+  Widget _buildDroplet({
+    required Widget child,
+    VoidCallback? onTap,
+    bool isCircle = true,
+  }) {
+    final borderRadius = isCircle ? null : BorderRadius.circular(20);
+    return Container(
+      width: isCircle ? 40 : null,
+      height: isCircle ? 40 : null,
+      decoration: BoxDecoration(
+        shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: borderRadius,
+        color: Colors.white.withOpacity(0.08),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.12),
+          width: 1,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          customBorder: isCircle ? const CircleBorder() : null,
+          borderRadius: borderRadius,
+          onTap: onTap,
+          child: Padding(
+            padding: isCircle ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: isCircle ? Center(child: child) : child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showFullScreenImage(BuildContext context, String imageUrl, String senderName, DateTime timestamp) {
+    final timeStr = _formatTime(timestamp);
+    final months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    final dateStr = '${timestamp.day} ${months[timestamp.month - 1]} в $timeStr';
+
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black,
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
+        pageBuilder: (context, animation, secondaryAnimation) => Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Stack(
+            children: [
+              // Image Viewer with Hero
+              Center(
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: Hero(
+                    tag: imageUrl,
+                    child: Image.network(
+                      imageUrl,
+                      headers: jwtToken != null ? {'Authorization': 'Bearer $jwtToken'} : null,
+                      fit: BoxFit.contain,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return const Center(
+                          child: CircularProgressIndicator(color: Colors.white),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        debugPrint('FULLSCREEN IMAGE LOAD ERROR: $error');
+                        debugPrint('FULLSCREEN IMAGE URL: $imageUrl');
+                        return const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.broken_image, color: Colors.white54, size: 64),
+                              SizedBox(height: 16),
+                              Text('Не удалось загрузить изображение', style: TextStyle(color: Colors.white54)),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+
+              // Animated UI elements
+              FadeTransition(
+                opacity: animation,
+                child: Stack(
+                  children: [
+                    // Top Left: Back Button Droplet
+                    Positioned(
+                      top: MediaQuery.paddingOf(context).top + 16,
+                      left: 16,
+                      child: _buildDroplet(
+                        isCircle: true,
+                        onTap: () => Navigator.pop(context),
+                        child: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+                      ),
+                    ),
+
+                    // Top Right: Context Menu Droplet
+                    Positioned(
+                      top: MediaQuery.paddingOf(context).top + 16,
+                      right: 16,
+                      child: _buildDroplet(
+                        isCircle: true,
+                        onTap: () {}, // Mock
+                        child: const Icon(Icons.more_vert, color: Colors.white, size: 22),
+                      ),
+                    ),
+
+                    // Bottom Center: Sender & Date Droplet
+                    Positioned(
+                      bottom: MediaQuery.paddingOf(context).bottom + 24,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: _buildDroplet(
+                          isCircle: false,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                senderName,
+                                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                dateStr,
+                                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openUrl(BuildContext context, String url, String fileId) async {
+    try {
+      String finalUrl = url;
+      // Если токен отсутствует в URL, попробуем получить новый токен доступа через API
+      if (!url.contains('token=')) {
+        try {
+          final apiClient = context.read<ApiClient>();
+          final response = await apiClient.post('/api/files/share/$fileId/', data: {'expires_in_days': 0});
+          if (response.statusCode == 200 || response.statusCode == 201) {
+            final token = response.data['token']?.toString();
+            if (token != null) {
+              final uri = Uri.parse(url);
+              finalUrl = uri.replace(queryParameters: {
+                ...uri.queryParameters,
+                'token': token,
+              }).toString();
+            }
+          }
+        } catch (e) {
+          // Игнорируем ошибку и пробуем открыть оригинальный URL
+          debugPrint('Ошибка при получении токена доступа к файлу: $e');
+        }
+      }
+
+      final uri = Uri.parse(finalUrl);
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) {
+        throw 'Не удалось открыть ссылку: $finalUrl';
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка при открытии файла: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (message.senderId == 'system') {
@@ -1684,47 +2189,305 @@ class MessageBubble extends StatelessWidget {
       );
     }
 
+    Map<String, dynamic>? fileData;
+    String displayContent = message.textContent;
+
+    // 1. Попытка распарсить JSON из textContent (E2E шифрованный формат сообщения-файла)
+    if (message.textContent.trim().startsWith('{')) {
+      try {
+        final parsed = jsonDecode(message.textContent);
+        if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice') && parsed['file_id'] != null) {
+          fileData = Map<String, dynamic>.from(parsed);
+          displayContent = ''; // Чистое файловое сообщение без текстовой подписи
+        }
+      } catch (_) {}
+    }
+
+    // 2. Попытка распарсить JSON из поля fileUrl
+    if (fileData == null && message.fileUrl != null && message.fileUrl!.isNotEmpty) {
+      try {
+        final parsed = jsonDecode(message.fileUrl!);
+        if (parsed is Map) {
+          fileData = Map<String, dynamic>.from(parsed);
+          // Если в тексте сообщения была сериализованная копия JSON, очищаем отображение текста
+          if (message.textContent.trim().startsWith('{')) {
+            displayContent = '';
+          }
+        }
+      } catch (_) {}
+    }
+
+    Widget? attachmentWidget;
+    bool isOnlyFile = false;
+    bool isOnlyImage = false;
+    if (fileData != null) {
+      final fileId = fileData['file_id']?.toString() ?? '';
+      final fileName = fileData['file_name']?.toString() ?? 'file';
+      final fileSize = fileData['file_size'] as int? ?? 0;
+      final mime = (fileData['mime_type'] ?? '').toString().toLowerCase();
+      final accessToken = fileData['access_token']?.toString();
+
+      final lowerName = fileName.toLowerCase();
+      final isImage = mime.startsWith('image/') ||
+          lowerName.endsWith('.jpg') ||
+          lowerName.endsWith('.jpeg') ||
+          lowerName.endsWith('.png') ||
+          lowerName.endsWith('.gif') ||
+          lowerName.endsWith('.webp') ||
+          lowerName.endsWith('.bmp') ||
+          lowerName.endsWith('.svg');
+
+      final isVideo = mime.startsWith('video/') ||
+          lowerName.endsWith('.mp4') ||
+          lowerName.endsWith('.avi') ||
+          lowerName.endsWith('.mov') ||
+          lowerName.endsWith('.wmv') ||
+          lowerName.endsWith('.flv') ||
+          lowerName.endsWith('.webm') ||
+          lowerName.endsWith('.mkv') ||
+          lowerName.endsWith('.3gp') ||
+          lowerName.endsWith('.ogv') ||
+          lowerName.endsWith('.m4v');
+
+      // Формируем абсолютную ссылку для скачивания с JWT или access токеном
+      final uri = Uri.parse(AppConfig.apiBaseUrl);
+      final hostUrl = '${uri.scheme}://${uri.host}${uri.hasPort ? ":${uri.port}" : ""}';
+      final fileUrlSuffix = fileData['file_url']?.toString() ?? '/api/files/download/$fileId/';
+      String absoluteUrl = '';
+      if (fileUrlSuffix.startsWith('http')) {
+        absoluteUrl = '$fileUrlSuffix${accessToken != null ? (fileUrlSuffix.contains('?') ? "&token=$accessToken" : "?token=$accessToken") : ""}';
+      } else {
+        final prefix = fileUrlSuffix.startsWith('/') ? '' : '/';
+        absoluteUrl = '$hostUrl$prefix$fileUrlSuffix${accessToken != null ? "?token=$accessToken" : ""}';
+      }
+
+      isOnlyFile = displayContent.isEmpty;
+      isOnlyImage = isOnlyFile && isImage;
+
+      if (isImage) {
+        attachmentWidget = GestureDetector(
+          onTap: () => _showFullScreenImage(context, absoluteUrl, senderRealName, message.timestamp),
+          child: Container(
+            margin: isOnlyImage ? EdgeInsets.zero : const EdgeInsets.only(bottom: 8),
+            constraints: const BoxConstraints(maxHeight: 280),
+            decoration: isOnlyImage ? null : BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: ClipRRect(
+              borderRadius: isOnlyImage ? (isMe ? _myCorners : _otherCorners) : BorderRadius.circular(11),
+              child: Stack(
+                children: [
+                  Hero(
+                    tag: absoluteUrl,
+                    child: Image.network(
+                      absoluteUrl,
+                      key: ValueKey('${absoluteUrl}_${jwtToken ?? ""}'),
+                      headers: jwtToken != null ? {'Authorization': 'Bearer $jwtToken'} : null,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        debugPrint('IMAGE PREVIEW LOAD ERROR: $error');
+                        debugPrint('IMAGE PREVIEW URL: $absoluteUrl');
+                        return Container(
+                          height: 120,
+                          color: Colors.black12,
+                          child: const Center(
+                            child: Icon(Icons.broken_image, color: Colors.white54, size: 36),
+                          ),
+                        );
+                      },
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Container(
+                          height: 150,
+                          color: Colors.black12,
+                          child: const Center(
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              if (isOnlyImage)
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _formatTime(message.timestamp),
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
+                        ),
+                        if (isMe) ...[
+                          const SizedBox(width: 4),
+                          FaIcon(
+                            message.isRead ? FontAwesomeIcons.checkDouble : FontAwesomeIcons.check,
+                            size: 10,
+                            color: Colors.white, // In overlay, we typically use white for both, or standard colors if legible
+                          ),
+                        ]
+                      ],
+                    ),
+                  ),
+                ),
+                ],
+              ),
+            ),
+          ),
+        );
+      } else if (isVideo) {
+        attachmentWidget = GestureDetector(
+          onTap: () => _openUrl(context, absoluteUrl, fileId),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            height: 140,
+            decoration: BoxDecoration(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: Stack(
+              children: [
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: const BoxDecoration(
+                      color: Colors.black45,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const FaIcon(FontAwesomeIcons.play, color: Colors.white, size: 20),
+                  ),
+                ),
+                Positioned(
+                  bottom: 8,
+                  left: 8,
+                  right: 8,
+                  child: Row(
+                    children: [
+                      const FaIcon(FontAwesomeIcons.video, color: Colors.white70, size: 10),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          fileName,
+                          style: const TextStyle(color: Colors.white70, fontSize: 10),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        _formatFileSize(fileSize),
+                        style: const TextStyle(color: Colors.white54, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      } else {
+        // Обычные файлы (документы, архивы и др.)
+        attachmentWidget = GestureDetector(
+          onTap: () => _openUrl(context, absoluteUrl, fileId),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const FaIcon(FontAwesomeIcons.fileLines, color: Colors.white70, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        fileName,
+                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _formatFileSize(fileSize),
+                        style: const TextStyle(color: Colors.white54, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+                const FaIcon(FontAwesomeIcons.download, color: Colors.white54, size: 14),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          // Use MediaQuery.sizeOf which is more efficient than MediaQuery.of(context).size
-          // because it only rebuilds when size changes, not on all MediaQuery changes
           maxWidth: MediaQuery.sizeOf(context).width * 0.76,
         ),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          padding: isOnlyImage ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
           decoration: BoxDecoration(
-            color: isMe ? _myBubbleColor : _otherBubbleColor,
+            color: isOnlyImage ? Colors.transparent : (isMe ? _myBubbleColor : _otherBubbleColor),
             borderRadius: isMe ? _myCorners : _otherCorners,
-            border: Border.all(color: _borderColor),
+            border: isOnlyImage ? null : Border.all(color: _borderColor),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              FormattedText(
-                content: message.textContent,
-                baseStyle: _bodyStyle,
-              ),
-              const SizedBox(height: 5),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _formatTime(message.timestamp),
-                    style: _timeStyle,
-                  ),
-                  if (isMe) ...[
-                    const SizedBox(width: 4),
-                    FaIcon(
-                      message.isRead ? FontAwesomeIcons.checkDouble : FontAwesomeIcons.check,
-                      size: 10,
-                      color: message.isRead ? _checkReadColor : _checkColor,
+              if (attachmentWidget != null) attachmentWidget,
+              if (displayContent.isNotEmpty)
+                FormattedText(
+                  content: displayContent,
+                  baseStyle: _bodyStyle,
+                ),
+              if (!isOnlyImage) const SizedBox(height: 5),
+              if (!isOnlyImage)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _formatTime(message.timestamp),
+                      style: _timeStyle,
                     ),
-                  ]
-                ],
-              ),
+                    if (isMe) ...[
+                      const SizedBox(width: 4),
+                      FaIcon(
+                        message.isRead ? FontAwesomeIcons.checkDouble : FontAwesomeIcons.check,
+                        size: 10,
+                        color: message.isRead ? _checkReadColor : _checkColor,
+                      ),
+                    ]
+                  ],
+                ),
             ],
           ),
         ),

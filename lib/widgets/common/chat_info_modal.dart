@@ -576,7 +576,7 @@ class _ChatInfoModalState extends BaseCustomModalState<ChatInfoModal> {
   }
 
   String _formatUserStatus(Map<String, dynamic>? otherUser) {
-    if (otherUser == null) return 'был(а) недавно';
+    if (otherUser == null) return 'был(-а) недавно';
     
     final isOnlineVal = otherUser['is_online'] ?? otherUser['online'];
     if (isOnlineVal == true || isOnlineVal?.toString().toLowerCase() == 'true') {
@@ -584,7 +584,7 @@ class _ChatInfoModalState extends BaseCustomModalState<ChatInfoModal> {
     }
     
     final lastSeenVal = otherUser['last_seen'] ?? otherUser['last_login'] ?? otherUser['last_activity'];
-    if (lastSeenVal == null) return 'был(а) недавно';
+    if (lastSeenVal == null) return 'был(-а) недавно';
     
     DateTime? lastSeen;
     if (lastSeenVal is String) {
@@ -595,7 +595,7 @@ class _ChatInfoModalState extends BaseCustomModalState<ChatInfoModal> {
       lastSeen = lastSeenVal;
     }
     
-    if (lastSeen == null) return 'был(а) недавно';
+    if (lastSeen == null) return 'был(-а) недавно';
     
     final now = DateTime.now();
     final difference = now.difference(lastSeen);
@@ -614,7 +614,7 @@ class _ChatInfoModalState extends BaseCustomModalState<ChatInfoModal> {
       } else {
         minStr = 'минут';
       }
-      return 'был(а) в сети $mins $minStr назад';
+      return 'был(-а) в сети $mins $minStr назад';
     }
     
     final today = DateTime(now.year, now.month, now.day);
@@ -624,17 +624,17 @@ class _ChatInfoModalState extends BaseCustomModalState<ChatInfoModal> {
     final minute = lastSeen.minute.toString().padLeft(2, '0');
     
     if (lastSeenDay == today) {
-      return 'был(а) в сети сегодня в $hour:$minute';
+      return 'был(-а) в сети сегодня в $hour:$minute';
     }
     
     final yesterday = today.subtract(const Duration(days: 1));
     if (lastSeenDay == yesterday) {
-      return 'был(а) в сети вчера в $hour:$minute';
+      return 'был(-а) в сети вчера в $hour:$minute';
     }
     
     final day = lastSeen.day.toString().padLeft(2, '0');
     final month = lastSeen.month.toString().padLeft(2, '0');
-    return 'был(а) в сети $day.$month.${lastSeen.year} в $hour:$minute';
+    return 'был(-а) в сети $day.$month.${lastSeen.year} в $hour:$minute';
   }
 
   String _pluralizeParticipants(int count) {

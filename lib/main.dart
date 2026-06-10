@@ -17,9 +17,21 @@ import 'styles/app_styles.dart';
 
 import 'services/database/app_database.dart';
 import 'services/chat/chat_local_repository.dart';
+import 'services/chat/presence_service.dart';
+
+import 'dart:io';
+
+class _DevHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+  }
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides.global = _DevHttpOverrides();
   
   // Инициализируем локальную зашифрованную БД
   final appDb = await AppDatabase.getInstance();
@@ -84,6 +96,19 @@ class XaneoApp extends StatelessWidget {
             });
             return authProvider;
           },
+        ),
+        // PresenceService для фонового и глобального отслеживания активности (в сети / не в сети)
+        Provider<PresenceService>(
+          lazy: false,
+          create: (context) {
+            final authProvider = context.read<AuthProvider>();
+            final presenceService = PresenceService(
+              authProvider: authProvider,
+            );
+            presenceService.init();
+            return presenceService;
+          },
+          dispose: (context, service) => service.dispose(),
         ),
       ],
       child: MaterialApp(

@@ -844,12 +844,18 @@ class CryptoService {
       final otherUserId = parts[1] == currentUserId ? parts[2] : parts[1];
 
       final theirKeyData = await fetchUserPublicKey(otherUserId);
-      if (theirKeyData == null || theirKeyData['x25519_public_key'] == null) {
+      if (theirKeyData == null) {
         return null;
       }
 
-      // Бот — не используем E2E шифрование
+      // Бот — не используем E2E шифрование, возвращаем пустой маркер бота
       if (theirKeyData['is_bot'] == true) {
+        final botMarker = Uint8List(0);
+        _chatKeyCache[chatId] = botMarker;
+        return botMarker;
+      }
+
+      if (theirKeyData['x25519_public_key'] == null) {
         return null;
       }
 
@@ -1339,6 +1345,11 @@ class CryptoService {
         return null;
       }
 
+      if (key.isEmpty) {
+        // Бот — не используем E2E шифрование, отправляем plaintext
+        return plaintext;
+      }
+
       // Используем AES-256-GCM из crypto package
       final aesGcm = crypto.AesGcm.with256bits();
 
@@ -1383,6 +1394,11 @@ class CryptoService {
       if (baseKey == null) {
         debugPrint('XSEC-2: No key for chat $chatId');
         return null;
+      }
+
+      if (baseKey.isEmpty) {
+        // Бот — не используем E2E шифрование, возвращаем plaintext как есть
+        return encryptedBase64;
       }
 
       final candidateKeys = await _candidateDecryptKeys(chatId, baseKey);
@@ -1524,10 +1540,10 @@ class CryptoService {
     const nonceLen = 12;
     const tagLen = 16;
 
-    if (data.length <= nonceLen + tagLen) return null;
+    if (data.length < nonceLen + tagLen) return null;
 
     final cipherLen = data.length - nonceLen - tagLen;
-    if (cipherLen <= 0) return null;
+    if (cipherLen < 0) return null;
 
     final layouts =
         <({String name, Uint8List nonce, Uint8List ciphertext, Uint8List tag})>[
@@ -1613,10 +1629,10 @@ class CryptoService {
     const nonceLen = 12;
     const tagLen = 16;
 
-    if (data.length <= nonceLen + tagLen) return null;
+    if (data.length < nonceLen + tagLen) return null;
 
     final cipherLen = data.length - nonceLen - tagLen;
-    if (cipherLen <= 0) return null;
+    if (cipherLen < 0) return null;
 
     final layouts =
         <({String name, Uint8List nonce, Uint8List ciphertext, Uint8List tag})>[

@@ -99,10 +99,10 @@ class ChatWebSocketService {
     _reconnectTimer = null;
     _activeChatId = null;
 
-    await _subscription?.cancel();
+    _subscription?.cancel();
     _subscription = null;
 
-    await _channel?.sink.close(ws_status.normalClosure);
+    _channel?.sink.close(ws_status.normalClosure);
     _channel = null;
   }
 

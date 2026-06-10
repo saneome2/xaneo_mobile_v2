@@ -8,7 +8,7 @@ import '../../services/api/api_client.dart';
 import '../../services/auth/token_storage.dart';
 import '../../services/chat/chat_service.dart';
 import '../../services/chat/chat_local_repository.dart';
-import '../../services/chat/chat_websocket_service.dart';
+import '../../services/chat/presence_service.dart';
 import '../../services/crypto/crypto_service.dart';
 import '../../styles/app_styles.dart';
 import '../../widgets/common/avatar_widget.dart';
@@ -25,14 +25,12 @@ class _ChatListScreenState extends State<ChatListScreen>
     with WidgetsBindingObserver {
   late final ChatService _chatService;
   late final LocalChatRepository _localChatRepo;
-  late final ChatWebSocketService _chatWebSocketService;
   bool _isLoadingSync = true;
   bool _isSyncInProgress = false;
   String? _error;
   Timer? _syncTimer;
   Timer? _relativeTimeTimer;
   StreamSubscription<Map<String, dynamic>>? _wsEventsSub;
-  String? _connectedWsChatId;
 
   @override
   void initState() {
@@ -42,8 +40,8 @@ class _ChatListScreenState extends State<ChatListScreen>
     // Инициализируем сервисы синхронно для работы StreamBuilder в первом кадре
     _localChatRepo = context.read<LocalChatRepository>();
     _chatService = ChatService(apiClient: context.read<ApiClient>());
-    _chatWebSocketService = ChatWebSocketService(tokenStorage: TokenStorage());
-    _wsEventsSub = _chatWebSocketService.events.listen(_handleWsEvent);
+    final presenceService = context.read<PresenceService>();
+    _wsEventsSub = presenceService.events.listen(_handleWsEvent);
     
     // Запускаем синхронизацию сети после сборки первого кадра
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -56,7 +54,6 @@ class _ChatListScreenState extends State<ChatListScreen>
   @override
   void dispose() {
     _wsEventsSub?.cancel();
-    _chatWebSocketService.dispose();
     _syncTimer?.cancel();
     _relativeTimeTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -140,7 +137,6 @@ class _ChatListScreenState extends State<ChatListScreen>
       
       // Сохраняем расшифрованные чаты в локальную БД
       await _localChatRepo.saveChatsBatch(decryptedChats);
-      await _ensureWsConnected(decryptedChats);
       
       if (mounted && _isLoadingSync) {
         setState(() {
@@ -157,24 +153,6 @@ class _ChatListScreenState extends State<ChatListScreen>
     } finally {
       _isSyncInProgress = false;
     }
-  }
-
-  Future<void> _ensureWsConnected(List<ChatModel> chats) async {
-    if (chats.isEmpty) return;
-
-    String? candidateChatId;
-    for (final chat in chats) {
-      if (chat.isFavorites || chat.id == 'favorites') {
-        candidateChatId = chat.id;
-        break;
-      }
-    }
-
-    candidateChatId ??= chats.first.id;
-
-    if (_connectedWsChatId == candidateChatId) return;
-    _connectedWsChatId = candidateChatId;
-    await _chatWebSocketService.connect(candidateChatId);
   }
 
   Future<void> _handleWsEvent(Map<String, dynamic> event) async {
