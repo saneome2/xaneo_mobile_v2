@@ -56,6 +56,8 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
   bool _isPasswordValid = false;
   bool _isPasswordConfirmValid = false;
   bool _isVerificationCodeValid = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
 
   bool _agreedToTerms = false;
   bool _agreedToDataStorage = false;
@@ -613,6 +615,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
   }
 
   Widget _buildInputStep(Key? key, String title, String label, String hint, TextEditingController controller, FocusNode focusNode, {bool obscureText = false, TextInputType? keyboardType}) {
+    final isPassword = controller == _passwordController;
     return Column(
       key: key,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -626,7 +629,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
           focusNode: focusNode,
           style: AppStyles.inputText,
           cursorColor: Colors.white,
-          obscureText: obscureText,
+          obscureText: isPassword ? _obscurePassword : obscureText,
           keyboardType: keyboardType,
           decoration: InputDecoration(
             hintText: label,
@@ -635,6 +638,22 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
             enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
             focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
             contentPadding: const EdgeInsets.symmetric(vertical: 16),
+            suffixIcon: isPassword
+                ? IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: FaIcon(
+                      _obscurePassword ? FontAwesomeIcons.eyeSlash : FontAwesomeIcons.eye,
+                      color: Colors.white70,
+                      size: 16,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _obscurePassword = !_obscurePassword;
+                      });
+                    },
+                  )
+                : null,
           ),
           onSubmitted: (_) => _isStepValid() ? _goToNextStep() : null,
         ),
@@ -846,7 +865,7 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
           focusNode: _passwordConfirmFocusNode,
           style: AppStyles.inputText,
           cursorColor: Colors.white,
-          obscureText: true,
+          obscureText: _obscureConfirmPassword,
           decoration: InputDecoration(
             hintText: 'Пароль ещё раз',
             hintStyle: AppStyles.inputHint,
@@ -854,11 +873,33 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
             enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
             focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
             contentPadding: const EdgeInsets.symmetric(vertical: 16),
-            suffixIcon: _isPasswordConfirmValid
-                ? const FaIcon(FontAwesomeIcons.circleCheck, color: Colors.green, size: 16)
-                : _passwordConfirmController.text.isNotEmpty && !_isPasswordConfirmValid
-                    ? const FaIcon(FontAwesomeIcons.circleExclamation, color: Colors.red, size: 16)
-                    : null,
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  icon: FaIcon(
+                    _obscureConfirmPassword ? FontAwesomeIcons.eyeSlash : FontAwesomeIcons.eye,
+                    color: Colors.white70,
+                    size: 16,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _obscureConfirmPassword = !_obscureConfirmPassword;
+                    });
+                  },
+                ),
+                if (_isPasswordConfirmValid) ...[
+                  const SizedBox(width: 8),
+                  const FaIcon(FontAwesomeIcons.circleCheck, color: Colors.green, size: 16),
+                ] else if (_passwordConfirmController.text.isNotEmpty && !_isPasswordConfirmValid) ...[
+                  const SizedBox(width: 8),
+                  const FaIcon(FontAwesomeIcons.circleExclamation, color: Colors.red, size: 16),
+                ],
+              ],
+            ),
           ),
           onSubmitted: (_) => _isStepValid() ? _goToNextStep() : null,
         ),

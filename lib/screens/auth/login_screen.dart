@@ -29,6 +29,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   bool _isUsernameValid = false;
   bool _isPasswordValid = false;
+  bool _obscurePassword = true;
   
   // Недавние аккаунты
   List<RecentAccount> _recentAccounts = [];
@@ -464,14 +465,28 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           focusNode: _passwordFocusNode,
           style: AppStyles.inputText,
           cursorColor: Colors.white,
-          obscureText: true,
-          decoration: const InputDecoration(
+          obscureText: _obscurePassword,
+          decoration: InputDecoration(
             hintText: 'Пароль',
             hintStyle: AppStyles.inputHint,
-            border: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
-            contentPadding: EdgeInsets.symmetric(vertical: 16),
+            border: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+            enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+            focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
+            contentPadding: const EdgeInsets.symmetric(vertical: 16),
+            suffixIcon: IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              icon: FaIcon(
+                _obscurePassword ? FontAwesomeIcons.eyeSlash : FontAwesomeIcons.eye,
+                color: Colors.white70,
+                size: 16,
+              ),
+              onPressed: () {
+                setState(() {
+                  _obscurePassword = !_obscurePassword;
+                });
+              },
+            ),
           ),
           onSubmitted: (_) => _goToNextStep(),
         ),

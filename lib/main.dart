@@ -18,6 +18,7 @@ import 'styles/app_styles.dart';
 import 'services/database/app_database.dart';
 import 'services/chat/chat_local_repository.dart';
 import 'services/chat/presence_service.dart';
+import 'utils/local_proxy.dart';
 
 import 'dart:io';
 
@@ -32,6 +33,7 @@ class _DevHttpOverrides extends HttpOverrides {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = _DevHttpOverrides();
+  LocalProxy.start();
   
   // Инициализируем локальную зашифрованную БД
   final appDb = await AppDatabase.getInstance();
@@ -86,10 +88,15 @@ class XaneoApp extends StatelessWidget {
         // AuthProvider для авторизации
         ChangeNotifierProvider<AuthProvider>(
           create: (context) {
-            final tokenStorage = TokenStorage();
-            final apiClient = ApiClient(tokenStorage: tokenStorage);
+            final apiClient = context.read<ApiClient>();
             final cryptoService = context.read<CryptoService>();
             final authProvider = AuthProviderFactory.createWithCryptoService(apiClient, cryptoService);
+            
+            // Register callback to log out the user on session expiry
+            apiClient.onSessionExpired = () {
+              authProvider.logout();
+            };
+
             // Инициализируем авторизацию с CryptoService для XSEC-2
             WidgetsBinding.instance.addPostFrameCallback((_) {
               authProvider.checkAuthStatus(cryptoService: cryptoService);
@@ -102,8 +109,10 @@ class XaneoApp extends StatelessWidget {
           lazy: false,
           create: (context) {
             final authProvider = context.read<AuthProvider>();
+            final apiClient = context.read<ApiClient>();
             final presenceService = PresenceService(
               authProvider: authProvider,
+              apiClient: apiClient,
             );
             presenceService.init();
             return presenceService;

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import '../../providers/auth_provider.dart';
 import 'chat_websocket_service.dart';
+import '../api/api_client.dart';
 
 /// Глобальный сервис присутствия
 /// 
@@ -17,12 +18,16 @@ class PresenceService with WidgetsBindingObserver {
 
   PresenceService({
     required AuthProvider authProvider,
+    required ApiClient apiClient,
     ChatWebSocketService? chatWebSocketService,
   })  : _authProvider = authProvider,
-        _chatWebSocketService = chatWebSocketService ?? ChatWebSocketService();
+        _chatWebSocketService = chatWebSocketService ?? ChatWebSocketService(apiClient: apiClient);
 
   /// Поток всех событий, приходящих из WebSocket
   Stream<Map<String, dynamic>> get events => _chatWebSocketService.events;
+
+  /// Статус подключения к WebSocket
+  ValueNotifier<bool> get isConnected => _chatWebSocketService.isConnected;
 
   /// Инициализация сервиса
   void init() {

@@ -60,9 +60,24 @@ class AvatarWidget extends StatelessWidget {
     final bool showInitialsWithGradient = !useNetworkImage && 
         (avatar == null || !avatar!.startsWith('http') || useDataImage);
     
-    // Используем переданный градиент или дефолтный
+    // Используем переданный градиент или дефолтный (вычисляется детерминированно из имени для монохромной палитры)
+    final String defaultGrad;
+    if (username.isEmpty) {
+      defaultGrad = '333333,111111';
+    } else {
+      final code = username.codeUnits.fold<int>(0, (prev, element) => prev + element);
+      final gradients = [
+        '3A3A3A,121212', // Dark Charcoal
+        '555555,222222', // Steel Grey
+        '777777,333333', // Medium Slate
+        '999999,444444', // Silver Onyx
+        '4A4A4A,1C1C1C', // Matte Carbon
+      ];
+      defaultGrad = gradients[code % gradients.length];
+    }
+
     final effectiveGradient = showInitialsWithGradient 
-        ? (avatarGradient ?? '10B981,14B8A6')  // Дефолтный градиент если null
+        ? (avatarGradient ?? defaultGrad)
         : null;
     
     return Container(

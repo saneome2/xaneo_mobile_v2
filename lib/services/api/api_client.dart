@@ -22,6 +22,9 @@ class ApiClient {
   final TokenStorage _tokenStorage;
   late final CookieJar _cookieJar;
   
+  /// Callback upon session expiration
+  VoidCallback? onSessionExpired;
+
   /// Флаг для предотвращения множественных обновлений токена
   bool _isRefreshing = false;
 
@@ -204,6 +207,9 @@ class _AuthInterceptor extends Interceptor {
         } catch (e) {
           return handler.next(err);
         }
+      } else {
+        // Refresh failed, meaning session is expired
+        _apiClient.onSessionExpired?.call();
       }
     }
     

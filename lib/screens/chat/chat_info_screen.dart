@@ -177,7 +177,7 @@ class _ChatInfoScreenState extends State<ChatInfoScreen> {
   /// Парсит градиент из строки
   List<Color> _parseGradientColors(String? gradient) {
     if (gradient == null || gradient.isEmpty) {
-      return [const Color(0xFF10B981), const Color(0xFF14B8A6)];
+      return [const Color(0xFF3A3A3A), const Color(0xFF1A1A1A)];
     }
     try {
       final parts = gradient.split(RegExp(r'[,|]'));
@@ -189,7 +189,7 @@ class _ChatInfoScreenState extends State<ChatInfoScreen> {
         return Color(int.parse('FF$colorStr', radix: 16));
       }).toList();
     } catch (_) {
-      return [const Color(0xFF10B981), const Color(0xFF14B8A6)];
+      return [const Color(0xFF3A3A3A), const Color(0xFF1A1A1A)];
     }
   }
 
@@ -202,7 +202,7 @@ class _ChatInfoScreenState extends State<ChatInfoScreen> {
 
     if (chat.isFavorites) {
       text = 'персональное облако';
-      textColor = const Color(0xFFA78BFA);
+      textColor = Colors.white;
       icon = Icons.cloud_done_rounded;
     } else if (_isDeleted()) {
       text = 'удалённый аккаунт';

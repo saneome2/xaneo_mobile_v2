@@ -9,17 +9,22 @@ import 'package:web_socket_channel/status.dart' as ws_status;
 
 import '../../config/app_config.dart';
 import '../auth/token_storage.dart';
+import '../api/api_client.dart';
 
 class ChatWebSocketService {
   final TokenStorage _tokenStorage;
+  final ApiClient? _apiClient;
 
-  ChatWebSocketService({TokenStorage? tokenStorage})
-      : _tokenStorage = tokenStorage ?? TokenStorage();
+  ChatWebSocketService({TokenStorage? tokenStorage, ApiClient? apiClient})
+      : _tokenStorage = tokenStorage ?? TokenStorage(),
+        _apiClient = apiClient;
 
   final StreamController<Map<String, dynamic>> _eventsController =
       StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<Map<String, dynamic>> get events => _eventsController.stream;
+
+  final ValueNotifier<bool> isConnected = ValueNotifier<bool>(false);
 
   IOWebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -35,15 +40,39 @@ class ChatWebSocketService {
     _manualDisconnect = false;
     _activeChatId = chatId;
 
-    final token = await _tokenStorage.getAccessToken();
-    if (token == null || token.isEmpty) {
-      debugPrint('WS: access token is missing, skip connect');
+    var token = await _tokenStorage.getAccessToken();
+    bool isExpired = token == null || token.isEmpty || _isTokenExpired(token);
+    
+    debugPrint('WS: token check - isExpired: $isExpired, hasApiClient: ${_apiClient != null}');
+    
+    if (isExpired) {
+      if (_apiClient != null) {
+        debugPrint('WS: access token is missing or expired, attempting to refresh...');
+        final newToken = await _apiClient!.refreshToken();
+        if (newToken != null && newToken.isNotEmpty) {
+          token = newToken;
+          isExpired = false;
+          debugPrint('WS: token successfully refreshed');
+        } else {
+          debugPrint('WS: token refresh failed (returned null or empty)');
+          _apiClient!.onSessionExpired?.call();
+        }
+      } else {
+        debugPrint('WS: token is expired, but ApiClient is null. Cannot refresh.');
+      }
+    }
+
+    if (token == null || token.isEmpty || isExpired) {
+      debugPrint('WS: access token is missing or expired, and could not be refreshed. skip connect');
       return;
     }
 
     final uri = _buildWsUri(chatId, token);
     final safeUri = uri.replace(queryParameters: {'token': '***'});
     debugPrint('WS: connecting to $safeUri');
+
+    // Начинаем попытку соединения
+    isConnected.value = false;
 
     try {
       final socket = await _openSocketWithFallback(uri);
@@ -61,6 +90,8 @@ class ChatWebSocketService {
         cancelOnError: true,
       );
       _reconnectAttempt = 0;
+      // Успешно подключено
+      isConnected.value = true;
     } catch (e) {
       debugPrint('WS: connect error: $e');
       _scheduleReconnect();
@@ -69,10 +100,16 @@ class ChatWebSocketService {
 
   Future<WebSocket> _openSocketWithFallback(Uri uri) async {
     final customClient = _buildDebugHttpClientForSelfSigned(uri);
+    final token = uri.queryParameters['token'];
+    final headers = <String, dynamic>{
+      if (token != null && token.isNotEmpty)
+        'Authorization': 'Bearer $token',
+    };
 
     try {
       return await WebSocket.connect(
         uri.toString(),
+        headers: headers,
         customClient: customClient,
       );
     } catch (e) {
@@ -86,7 +123,10 @@ class ChatWebSocketService {
             fallbackUri.replace(queryParameters: {'token': '***'});
         debugPrint('WS: TLS handshake failed, fallback to $safeFallbackUri');
 
-        return await WebSocket.connect(fallbackUri.toString());
+        return await WebSocket.connect(
+          fallbackUri.toString(),
+          headers: headers,
+        );
       }
 
       rethrow;
@@ -95,6 +135,7 @@ class ChatWebSocketService {
 
   Future<void> disconnect() async {
     _manualDisconnect = true;
+    isConnected.value = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _activeChatId = null;
@@ -188,6 +229,7 @@ class ChatWebSocketService {
   }
 
   void _scheduleReconnect() {
+    isConnected.value = false;
     if (_manualDisconnect || _activeChatId == null) return;
 
     _reconnectTimer?.cancel();
@@ -204,5 +246,34 @@ class ChatWebSocketService {
       if (chatId == null) return;
       connect(chatId);
     });
+  }
+
+  bool _isTokenExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return true;
+      
+      final payload = parts[1];
+      var normalized = payload.replaceAll('-', '+').replaceAll('_', '/');
+      final pad = normalized.length % 4;
+      if (pad == 2) {
+        normalized += '==';
+      } else if (pad == 3) {
+        normalized += '=';
+      }
+      final decodedBytes = base64Decode(normalized);
+      final decodedString = utf8.decode(decodedBytes);
+      final jsonMap = jsonDecode(decodedString) as Map<String, dynamic>;
+      
+      if (jsonMap.containsKey('exp')) {
+        final exp = jsonMap['exp'] as int;
+        final expiry = DateTime.fromMillisecondsSinceEpoch(exp * 1000, isUtc: true);
+        return DateTime.now().toUtc().isAfter(expiry.subtract(AppConfig.tokenRefreshThreshold));
+      }
+      return true;
+    } catch (e) {
+      debugPrint('WS: Error parsing token expiry: $e');
+      return true;
+    }
   }
 }
