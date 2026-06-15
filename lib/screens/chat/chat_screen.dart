@@ -80,6 +80,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isInitialLoadDone = false;
   final Set<String> _animatedMessageIds = {};
   final Set<String> _messagesToAnimate = {};
+  bool _isOwner = false;
 
   Future<void> _loadJwtToken() async {
     final token = await TokenStorage().getAccessToken();
@@ -237,6 +238,9 @@ class _ChatScreenState extends State<ChatScreen> {
     
     // 4. Mark messages as read since the chat is open
     _chatService.markMessagesAsRead(widget.chat.id);
+
+    // 5. Fetch group/channel details for owner check
+    _fetchChatDetails();
   }
 
   Future<void> _syncLatestMessages() async {
@@ -909,7 +913,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildHeaderDroplet({
     required Widget child,
-    required VoidCallback onTap,
+    VoidCallback? onTap,
     bool isCircle = true,
   }) {
     final borderRadius = isCircle ? null : BorderRadius.circular(20);
@@ -927,12 +931,14 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: Material(
         color: Colors.transparent,
-        child: InkWell(
-          customBorder: isCircle ? const CircleBorder() : null,
-          borderRadius: borderRadius,
-          onTap: onTap,
-          child: Center(child: child),
-        ),
+        child: onTap != null
+            ? InkWell(
+                customBorder: isCircle ? const CircleBorder() : null,
+                borderRadius: borderRadius,
+                onTap: onTap,
+                child: Center(child: child),
+              )
+            : Center(child: child),
       ),
     );
   }
@@ -1026,10 +1032,24 @@ class _ChatScreenState extends State<ChatScreen> {
             const SizedBox(width: 8),
           ],
           Center(
-            child: _buildHeaderDroplet(
-              isCircle: true,
-              onTap: () {},
-              child: const FaIcon(FontAwesomeIcons.ellipsisVertical, color: Colors.white70, size: 16),
+            child: PopupMenuButton<String>(
+              offset: const Offset(0, 48),
+              color: const Color(0xFF16161A),
+              elevation: 8,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(
+                  color: Colors.white.withOpacity(0.08),
+                  width: 1,
+                ),
+              ),
+              onSelected: _handleMenuAction,
+              itemBuilder: (context) => _buildMenuItems(),
+              child: _buildHeaderDroplet(
+                isCircle: true,
+                onTap: null,
+                child: const FaIcon(FontAwesomeIcons.ellipsisVertical, color: Colors.white70, size: 16),
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -1755,6 +1775,444 @@ class _ChatScreenState extends State<ChatScreen> {
       margin: const EdgeInsets.symmetric(horizontal: 2),
     );
   }
+
+  Future<void> _fetchChatDetails() async {
+    if (widget.chat.isFavorites || widget.chat.isPersonal) {
+      return;
+    }
+    
+    try {
+      final apiClient = context.read<ApiClient>();
+      final String endpoint;
+      if (widget.chat.isGroup) {
+        final groupId = widget.chat.id.replaceFirst('group_', '');
+        endpoint = '/groups/$groupId/';
+      } else if (widget.chat.isChannel) {
+        final channelId = widget.chat.id.replaceFirst('channel_', '');
+        endpoint = '/channels/$channelId/';
+      } else {
+        return;
+      }
+      
+      final response = await apiClient.get(endpoint);
+      if (response.statusCode == 200 && response.data != null) {
+        final data = response.data;
+        if (data is Map<String, dynamic>) {
+          final isOwner = data['is_creator'] == true || data['is_owner'] == true;
+          if (mounted) {
+            setState(() {
+              _isOwner = isOwner;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching chat details: $e');
+    }
+  }
+
+  List<PopupMenuEntry<String>> _buildMenuItems() {
+    final List<PopupMenuEntry<String>> items = [];
+
+    PopupMenuItem<String> buildItem({
+      required String value,
+      required FaIconData icon,
+      required String text,
+      bool isDanger = false,
+    }) {
+      return PopupMenuItem<String>(
+        value: value,
+        height: 44,
+        child: Row(
+          children: [
+            FaIcon(
+              icon,
+              size: 16,
+              color: isDanger ? Colors.redAccent : Colors.white70,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 14,
+                color: isDanger ? Colors.redAccent : Colors.white,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (widget.chat.isPersonal) {
+      items.add(buildItem(
+        value: 'search',
+        icon: FontAwesomeIcons.magnifyingGlass,
+        text: 'Поиск',
+      ));
+      items.add(buildItem(
+        value: 'clear',
+        icon: FontAwesomeIcons.trash,
+        text: 'Очистить историю',
+      ));
+      if (!_isBot() && !_isDeleted()) {
+        items.add(buildItem(
+          value: 'delete',
+          icon: FontAwesomeIcons.trashCan,
+          text: 'Удалить чат',
+          isDanger: true,
+        ));
+      }
+    } else if (widget.chat.isFavorites) {
+      items.add(buildItem(
+        value: 'search',
+        icon: FontAwesomeIcons.magnifyingGlass,
+        text: 'Поиск',
+      ));
+      items.add(buildItem(
+        value: 'clear',
+        icon: FontAwesomeIcons.trash,
+        text: 'Очистить историю',
+      ));
+    } else if (widget.chat.isChannel) {
+      if (_isOwner) {
+        items.add(buildItem(
+          value: 'clear',
+          icon: FontAwesomeIcons.trash,
+          text: 'Очистить историю',
+        ));
+        items.add(buildItem(
+          value: 'search',
+          icon: FontAwesomeIcons.magnifyingGlass,
+          text: 'Поиск',
+        ));
+        items.add(buildItem(
+          value: 'delete',
+          icon: FontAwesomeIcons.trashCan,
+          text: 'Удалить канал',
+          isDanger: true,
+        ));
+      } else {
+        items.add(buildItem(
+          value: 'search',
+          icon: FontAwesomeIcons.magnifyingGlass,
+          text: 'Поиск',
+        ));
+        items.add(buildItem(
+          value: 'report',
+          icon: FontAwesomeIcons.flag,
+          text: 'Пожаловаться',
+        ));
+      }
+    } else if (widget.chat.isGroup) {
+      if (_isOwner) {
+        items.add(buildItem(
+          value: 'edit',
+          icon: FontAwesomeIcons.pen,
+          text: 'Редактировать группу',
+        ));
+        items.add(buildItem(
+          value: 'search',
+          icon: FontAwesomeIcons.magnifyingGlass,
+          text: 'Поиск',
+        ));
+        items.add(buildItem(
+          value: 'clear',
+          icon: FontAwesomeIcons.trash,
+          text: 'Очистить историю',
+        ));
+        items.add(buildItem(
+          value: 'delete',
+          icon: FontAwesomeIcons.trashCan,
+          text: 'Удалить группу',
+          isDanger: true,
+        ));
+        items.add(buildItem(
+          value: 'leave',
+          icon: FontAwesomeIcons.rightFromBracket,
+          text: 'Покинуть группу',
+          isDanger: true,
+        ));
+      } else {
+        items.add(buildItem(
+          value: 'search',
+          icon: FontAwesomeIcons.magnifyingGlass,
+          text: 'Поиск',
+        ));
+        items.add(buildItem(
+          value: 'clear',
+          icon: FontAwesomeIcons.trash,
+          text: 'Очистить историю',
+        ));
+        items.add(buildItem(
+          value: 'report',
+          icon: FontAwesomeIcons.flag,
+          text: 'Пожаловаться',
+        ));
+        items.add(buildItem(
+          value: 'leave',
+          icon: FontAwesomeIcons.rightFromBracket,
+          text: 'Покинуть группу',
+          isDanger: true,
+        ));
+      }
+    }
+
+    return items;
+  }
+
+  void _handleMenuAction(String value) {
+    switch (value) {
+      case 'search':
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Поиск сообщений временно недоступен в мобильной версии'),
+            backgroundColor: Color(0xFF1E1E22),
+          ),
+        );
+        break;
+      case 'clear':
+        _confirmClearHistory();
+        break;
+      case 'delete':
+        _confirmDeleteChat();
+        break;
+      case 'report':
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Жалоба отправлена модераторам'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        break;
+      case 'edit':
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Редактирование группы временно недоступно в мобильной версии'),
+            backgroundColor: Color(0xFF1E1E22),
+          ),
+        );
+        break;
+      case 'leave':
+        _confirmLeaveGroup();
+        break;
+    }
+  }
+
+  Future<void> _confirmClearHistory() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E22),
+        title: const Text('Очистить историю', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Вы уверены, что хотите очистить историю сообщений в этом чате? Это действие нельзя отменить.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена', style: TextStyle(color: Colors.white38)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Очистить', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _clearHistory();
+    }
+  }
+
+  Future<void> _clearHistory() async {
+    try {
+      final apiClient = context.read<ApiClient>();
+      
+      final String chatType;
+      if (widget.chat.isFavorites) {
+        chatType = 'favorites';
+      } else if (widget.chat.isChannel) {
+        chatType = 'channel';
+      } else if (widget.chat.isGroup) {
+        chatType = 'group';
+      } else {
+        chatType = 'personal';
+      }
+
+      final response = await apiClient.post(
+        '/../clear-chat-history/',
+        data: {
+          'chat_id': widget.chat.id,
+          'chat_type': chatType,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final localId = _localChatId;
+        if (localId != null) {
+          await _localChatRepo.deleteMessagesForChat(localId);
+        }
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('История чата "${widget.chat.name}" успешно очищена'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error clearing chat history: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка при очистке истории: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmDeleteChat() async {
+    final String titleText;
+    final String contentText;
+    if (widget.chat.isChannel) {
+      titleText = 'Удалить канал';
+      contentText = 'Вы уверены, что хотите удалить канал "${widget.chat.name}"? Все подписчики будут удалены, а история очищена.';
+    } else if (widget.chat.isGroup) {
+      titleText = 'Удалить группу';
+      contentText = 'Вы уверены, что хотите удалить группу "${widget.chat.name}"? Все участники будут удалены, а история очищена.';
+    } else {
+      titleText = 'Удалить чат';
+      contentText = 'Вы уверены, что хотите удалить чат "${widget.chat.name}"? Все сообщения будут безвозвратно удалены.';
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E22),
+        title: Text(titleText, style: const TextStyle(color: Colors.white)),
+        content: Text(contentText, style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена', style: TextStyle(color: Colors.white38)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Удалить', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _deleteChatAction();
+    }
+  }
+
+  Future<void> _deleteChatAction() async {
+    try {
+      final apiClient = context.read<ApiClient>();
+      
+      final response = await apiClient.post(
+        '/../delete-chat/',
+        data: {
+          'chat_id': widget.chat.id,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        await _localChatRepo.deleteChatByServerId(widget.chat.id);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Чат "${widget.chat.name}" успешно удален'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.of(context).pop();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error deleting chat: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка при удалении чата: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmLeaveGroup() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E22),
+        title: const Text('Покинуть группу', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Вы уверены, что хотите покинуть группу "${widget.chat.name}"?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена', style: TextStyle(color: Colors.white38)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Выйти', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _leaveGroupAction();
+    }
+  }
+
+  Future<void> _leaveGroupAction() async {
+    try {
+      final apiClient = context.read<ApiClient>();
+      final groupId = widget.chat.id.replaceFirst('group_', '');
+      
+      final response = await apiClient.post('/groups/$groupId/leave/');
+
+      if (response.statusCode == 200) {
+        await _localChatRepo.deleteChatByServerId(widget.chat.id);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Вы покинули группу "${widget.chat.name}"'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.of(context).pop();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error leaving group: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка при выходе из группы: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
 }
 
 class FormattedTextEditingController extends TextEditingController {
@@ -2406,7 +2864,7 @@ class MessageBubble extends StatelessWidget {
       if (!url.contains('token=')) {
         try {
           final apiClient = context.read<ApiClient>();
-          final response = await apiClient.post('/api/files/share/$fileId/', data: {'expires_in_days': 0});
+          final response = await apiClient.post('/files/share/$fileId/', data: {'expires_in_days': 0});
           if (response.statusCode == 200 || response.statusCode == 201) {
             final token = response.data['token']?.toString();
             if (token != null) {

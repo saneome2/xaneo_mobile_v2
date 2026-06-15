@@ -88,6 +88,13 @@ class LocalChatRepository {
         .go();
   }
 
+  /// Удаление всех сообщений чата из локальной БД
+  Future<int> deleteMessagesForChat(int chatId) {
+    return (_db.delete(_db.messages)
+          ..where((m) => m.chatId.equals(chatId)))
+        .go();
+  }
+
   /// Пакетное сохранение чатов из API в локальную БД
   Future<void> saveChatsBatch(List<ChatModel> chatModels) async {
     await _db.transaction(() async {
