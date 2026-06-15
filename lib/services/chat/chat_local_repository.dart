@@ -11,9 +11,33 @@ class LocalChatRepository {
   /// Получение всех чатов в виде потока (Stream) для реактивного UI, уже преобразованных в ChatModel.
   Stream<List<ChatModel>> watchAllChats() {
     return (_db.select(_db.chats)
+          ..where((c) => c.isArchived.equals(false))
           ..orderBy([(c) => OrderingTerm.desc(c.lastMessageTime)]))
         .watch()
         .map((rows) => rows.map(_mapChatToModel).toList());
+  }
+
+  /// Получение архивных чатов в виде потока (Stream)
+  Stream<List<ChatModel>> watchArchivedChats() {
+    return (_db.select(_db.chats)
+          ..where((c) => c.isArchived.equals(true))
+          ..orderBy([(c) => OrderingTerm.desc(c.lastMessageTime)]))
+        .watch()
+        .map((rows) => rows.map(_mapChatToModel).toList());
+  }
+
+  /// Обновление статуса архивации чата
+  Future<void> updateArchiveStatus(String serverChatId, bool isArchived) async {
+    final existing = await (_db.select(_db.chats)
+          ..where((c) => c.serverChatId.equals(serverChatId)))
+        .getSingleOrNull();
+    if (existing != null) {
+      await (_db.update(_db.chats)..where((c) => c.id.equals(existing.id)))
+          .write(ChatsCompanion(
+            isArchived: Value(isArchived),
+            archivedAt: Value(isArchived ? DateTime.now() : null),
+          ));
+    }
   }
 
   /// Получение сообщений конкретного чата в виде потока
@@ -146,6 +170,8 @@ class LocalChatRepository {
       isFavorites: row.isFavorites,
       otherUser: otherUser,
       isEncrypted: row.isEncrypted,
+      isArchived: row.isArchived,
+      archivedAt: row.archivedAt,
     );
   }
 
@@ -169,6 +195,8 @@ class LocalChatRepository {
       isFavorites: Value(model.isFavorites),
       otherUserJson: Value(otherUserJson),
       isEncrypted: Value(model.isEncrypted),
+      isArchived: Value(model.isArchived),
+      archivedAt: Value(model.archivedAt),
     );
   }
 
@@ -217,6 +245,8 @@ class LocalChatRepository {
       isFavorites: incoming.isFavorites,
       otherUser: incoming.otherUser ?? existing.otherUser,
       isEncrypted: incomingIsLatest ? incoming.isEncrypted : existing.isEncrypted,
+      isArchived: incoming.isArchived,
+      archivedAt: incoming.archivedAt ?? existing.archivedAt,
     );
   }
 }

@@ -117,6 +117,22 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, Chat> {
       defaultConstraints: GeneratedColumn.constraintIsAlways(
           'CHECK ("is_encrypted" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _isArchivedMeta =
+      const VerificationMeta('isArchived');
+  @override
+  late final GeneratedColumn<bool> isArchived = GeneratedColumn<bool>(
+      'is_archived', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("is_archived" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _archivedAtMeta =
+      const VerificationMeta('archivedAt');
+  @override
+  late final GeneratedColumn<DateTime> archivedAt = GeneratedColumn<DateTime>(
+      'archived_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -132,7 +148,9 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, Chat> {
         isPersonal,
         isFavorites,
         otherUserJson,
-        isEncrypted
+        isEncrypted,
+        isArchived,
+        archivedAt
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -221,6 +239,18 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, Chat> {
           isEncrypted.isAcceptableOrUnknown(
               data['is_encrypted']!, _isEncryptedMeta));
     }
+    if (data.containsKey('is_archived')) {
+      context.handle(
+          _isArchivedMeta,
+          isArchived.isAcceptableOrUnknown(
+              data['is_archived']!, _isArchivedMeta));
+    }
+    if (data.containsKey('archived_at')) {
+      context.handle(
+          _archivedAtMeta,
+          archivedAt.isAcceptableOrUnknown(
+              data['archived_at']!, _archivedAtMeta));
+    }
     return context;
   }
 
@@ -258,6 +288,10 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, Chat> {
           .read(DriftSqlType.string, data['${effectivePrefix}other_user_json']),
       isEncrypted: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}is_encrypted'])!,
+      isArchived: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}is_archived'])!,
+      archivedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}archived_at']),
     );
   }
 
@@ -282,6 +316,8 @@ class Chat extends DataClass implements Insertable<Chat> {
   final bool isFavorites;
   final String? otherUserJson;
   final bool isEncrypted;
+  final bool isArchived;
+  final DateTime? archivedAt;
   const Chat(
       {required this.id,
       required this.serverChatId,
@@ -296,7 +332,9 @@ class Chat extends DataClass implements Insertable<Chat> {
       required this.isPersonal,
       required this.isFavorites,
       this.otherUserJson,
-      required this.isEncrypted});
+      required this.isEncrypted,
+      required this.isArchived,
+      this.archivedAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -324,6 +362,10 @@ class Chat extends DataClass implements Insertable<Chat> {
       map['other_user_json'] = Variable<String>(otherUserJson);
     }
     map['is_encrypted'] = Variable<bool>(isEncrypted);
+    map['is_archived'] = Variable<bool>(isArchived);
+    if (!nullToAbsent || archivedAt != null) {
+      map['archived_at'] = Variable<DateTime>(archivedAt);
+    }
     return map;
   }
 
@@ -352,6 +394,10 @@ class Chat extends DataClass implements Insertable<Chat> {
           ? const Value.absent()
           : Value(otherUserJson),
       isEncrypted: Value(isEncrypted),
+      isArchived: Value(isArchived),
+      archivedAt: archivedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(archivedAt),
     );
   }
 
@@ -373,6 +419,8 @@ class Chat extends DataClass implements Insertable<Chat> {
       isFavorites: serializer.fromJson<bool>(json['isFavorites']),
       otherUserJson: serializer.fromJson<String?>(json['otherUserJson']),
       isEncrypted: serializer.fromJson<bool>(json['isEncrypted']),
+      isArchived: serializer.fromJson<bool>(json['isArchived']),
+      archivedAt: serializer.fromJson<DateTime?>(json['archivedAt']),
     );
   }
   @override
@@ -393,6 +441,8 @@ class Chat extends DataClass implements Insertable<Chat> {
       'isFavorites': serializer.toJson<bool>(isFavorites),
       'otherUserJson': serializer.toJson<String?>(otherUserJson),
       'isEncrypted': serializer.toJson<bool>(isEncrypted),
+      'isArchived': serializer.toJson<bool>(isArchived),
+      'archivedAt': serializer.toJson<DateTime?>(archivedAt),
     };
   }
 
@@ -410,7 +460,9 @@ class Chat extends DataClass implements Insertable<Chat> {
           bool? isPersonal,
           bool? isFavorites,
           Value<String?> otherUserJson = const Value.absent(),
-          bool? isEncrypted}) =>
+          bool? isEncrypted,
+          bool? isArchived,
+          Value<DateTime?> archivedAt = const Value.absent()}) =>
       Chat(
         id: id ?? this.id,
         serverChatId: serverChatId ?? this.serverChatId,
@@ -430,6 +482,8 @@ class Chat extends DataClass implements Insertable<Chat> {
         otherUserJson:
             otherUserJson.present ? otherUserJson.value : this.otherUserJson,
         isEncrypted: isEncrypted ?? this.isEncrypted,
+        isArchived: isArchived ?? this.isArchived,
+        archivedAt: archivedAt.present ? archivedAt.value : this.archivedAt,
       );
   Chat copyWithCompanion(ChatsCompanion data) {
     return Chat(
@@ -460,6 +514,10 @@ class Chat extends DataClass implements Insertable<Chat> {
           : this.otherUserJson,
       isEncrypted:
           data.isEncrypted.present ? data.isEncrypted.value : this.isEncrypted,
+      isArchived:
+          data.isArchived.present ? data.isArchived.value : this.isArchived,
+      archivedAt:
+          data.archivedAt.present ? data.archivedAt.value : this.archivedAt,
     );
   }
 
@@ -479,7 +537,9 @@ class Chat extends DataClass implements Insertable<Chat> {
           ..write('isPersonal: $isPersonal, ')
           ..write('isFavorites: $isFavorites, ')
           ..write('otherUserJson: $otherUserJson, ')
-          ..write('isEncrypted: $isEncrypted')
+          ..write('isEncrypted: $isEncrypted, ')
+          ..write('isArchived: $isArchived, ')
+          ..write('archivedAt: $archivedAt')
           ..write(')'))
         .toString();
   }
@@ -499,7 +559,9 @@ class Chat extends DataClass implements Insertable<Chat> {
       isPersonal,
       isFavorites,
       otherUserJson,
-      isEncrypted);
+      isEncrypted,
+      isArchived,
+      archivedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -517,7 +579,9 @@ class Chat extends DataClass implements Insertable<Chat> {
           other.isPersonal == this.isPersonal &&
           other.isFavorites == this.isFavorites &&
           other.otherUserJson == this.otherUserJson &&
-          other.isEncrypted == this.isEncrypted);
+          other.isEncrypted == this.isEncrypted &&
+          other.isArchived == this.isArchived &&
+          other.archivedAt == this.archivedAt);
 }
 
 class ChatsCompanion extends UpdateCompanion<Chat> {
@@ -535,6 +599,8 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
   final Value<bool> isFavorites;
   final Value<String?> otherUserJson;
   final Value<bool> isEncrypted;
+  final Value<bool> isArchived;
+  final Value<DateTime?> archivedAt;
   const ChatsCompanion({
     this.id = const Value.absent(),
     this.serverChatId = const Value.absent(),
@@ -550,6 +616,8 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
     this.isFavorites = const Value.absent(),
     this.otherUserJson = const Value.absent(),
     this.isEncrypted = const Value.absent(),
+    this.isArchived = const Value.absent(),
+    this.archivedAt = const Value.absent(),
   });
   ChatsCompanion.insert({
     this.id = const Value.absent(),
@@ -566,6 +634,8 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
     this.isFavorites = const Value.absent(),
     this.otherUserJson = const Value.absent(),
     this.isEncrypted = const Value.absent(),
+    this.isArchived = const Value.absent(),
+    this.archivedAt = const Value.absent(),
   })  : serverChatId = Value(serverChatId),
         name = Value(name);
   static Insertable<Chat> custom({
@@ -583,6 +653,8 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
     Expression<bool>? isFavorites,
     Expression<String>? otherUserJson,
     Expression<bool>? isEncrypted,
+    Expression<bool>? isArchived,
+    Expression<DateTime>? archivedAt,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -599,6 +671,8 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
       if (isFavorites != null) 'is_favorites': isFavorites,
       if (otherUserJson != null) 'other_user_json': otherUserJson,
       if (isEncrypted != null) 'is_encrypted': isEncrypted,
+      if (isArchived != null) 'is_archived': isArchived,
+      if (archivedAt != null) 'archived_at': archivedAt,
     });
   }
 
@@ -616,7 +690,9 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
       Value<bool>? isPersonal,
       Value<bool>? isFavorites,
       Value<String?>? otherUserJson,
-      Value<bool>? isEncrypted}) {
+      Value<bool>? isEncrypted,
+      Value<bool>? isArchived,
+      Value<DateTime?>? archivedAt}) {
     return ChatsCompanion(
       id: id ?? this.id,
       serverChatId: serverChatId ?? this.serverChatId,
@@ -632,6 +708,8 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
       isFavorites: isFavorites ?? this.isFavorites,
       otherUserJson: otherUserJson ?? this.otherUserJson,
       isEncrypted: isEncrypted ?? this.isEncrypted,
+      isArchived: isArchived ?? this.isArchived,
+      archivedAt: archivedAt ?? this.archivedAt,
     );
   }
 
@@ -680,6 +758,12 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
     if (isEncrypted.present) {
       map['is_encrypted'] = Variable<bool>(isEncrypted.value);
     }
+    if (isArchived.present) {
+      map['is_archived'] = Variable<bool>(isArchived.value);
+    }
+    if (archivedAt.present) {
+      map['archived_at'] = Variable<DateTime>(archivedAt.value);
+    }
     return map;
   }
 
@@ -699,7 +783,9 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
           ..write('isPersonal: $isPersonal, ')
           ..write('isFavorites: $isFavorites, ')
           ..write('otherUserJson: $otherUserJson, ')
-          ..write('isEncrypted: $isEncrypted')
+          ..write('isEncrypted: $isEncrypted, ')
+          ..write('isArchived: $isArchived, ')
+          ..write('archivedAt: $archivedAt')
           ..write(')'))
         .toString();
   }
@@ -1162,6 +1248,8 @@ typedef $$ChatsTableCreateCompanionBuilder = ChatsCompanion Function({
   Value<bool> isFavorites,
   Value<String?> otherUserJson,
   Value<bool> isEncrypted,
+  Value<bool> isArchived,
+  Value<DateTime?> archivedAt,
 });
 typedef $$ChatsTableUpdateCompanionBuilder = ChatsCompanion Function({
   Value<int> id,
@@ -1178,6 +1266,8 @@ typedef $$ChatsTableUpdateCompanionBuilder = ChatsCompanion Function({
   Value<bool> isFavorites,
   Value<String?> otherUserJson,
   Value<bool> isEncrypted,
+  Value<bool> isArchived,
+  Value<DateTime?> archivedAt,
 });
 
 final class $$ChatsTableReferences
@@ -1250,6 +1340,12 @@ class $$ChatsTableFilterComposer extends Composer<_$AppDatabase, $ChatsTable> {
 
   ColumnFilters<bool> get isEncrypted => $composableBuilder(
       column: $table.isEncrypted, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get isArchived => $composableBuilder(
+      column: $table.isArchived, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => ColumnFilters(column));
 
   Expression<bool> messagesRefs(
       Expression<bool> Function($$MessagesTableFilterComposer f) f) {
@@ -1327,6 +1423,12 @@ class $$ChatsTableOrderingComposer
 
   ColumnOrderings<bool> get isEncrypted => $composableBuilder(
       column: $table.isEncrypted, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get isArchived => $composableBuilder(
+      column: $table.isArchived, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => ColumnOrderings(column));
 }
 
 class $$ChatsTableAnnotationComposer
@@ -1379,6 +1481,12 @@ class $$ChatsTableAnnotationComposer
 
   GeneratedColumn<bool> get isEncrypted => $composableBuilder(
       column: $table.isEncrypted, builder: (column) => column);
+
+  GeneratedColumn<bool> get isArchived => $composableBuilder(
+      column: $table.isArchived, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => column);
 
   Expression<T> messagesRefs<T extends Object>(
       Expression<T> Function($$MessagesTableAnnotationComposer a) f) {
@@ -1439,6 +1547,8 @@ class $$ChatsTableTableManager extends RootTableManager<
             Value<bool> isFavorites = const Value.absent(),
             Value<String?> otherUserJson = const Value.absent(),
             Value<bool> isEncrypted = const Value.absent(),
+            Value<bool> isArchived = const Value.absent(),
+            Value<DateTime?> archivedAt = const Value.absent(),
           }) =>
               ChatsCompanion(
             id: id,
@@ -1455,6 +1565,8 @@ class $$ChatsTableTableManager extends RootTableManager<
             isFavorites: isFavorites,
             otherUserJson: otherUserJson,
             isEncrypted: isEncrypted,
+            isArchived: isArchived,
+            archivedAt: archivedAt,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -1471,6 +1583,8 @@ class $$ChatsTableTableManager extends RootTableManager<
             Value<bool> isFavorites = const Value.absent(),
             Value<String?> otherUserJson = const Value.absent(),
             Value<bool> isEncrypted = const Value.absent(),
+            Value<bool> isArchived = const Value.absent(),
+            Value<DateTime?> archivedAt = const Value.absent(),
           }) =>
               ChatsCompanion.insert(
             id: id,
@@ -1487,6 +1601,8 @@ class $$ChatsTableTableManager extends RootTableManager<
             isFavorites: isFavorites,
             otherUserJson: otherUserJson,
             isEncrypted: isEncrypted,
+            isArchived: isArchived,
+            archivedAt: archivedAt,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) =>

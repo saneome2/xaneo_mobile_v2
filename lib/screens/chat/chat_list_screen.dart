@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../../models/chat/chat_model.dart';
@@ -13,6 +14,7 @@ import '../../services/crypto/crypto_service.dart';
 import '../../styles/app_styles.dart';
 import '../../widgets/common/avatar_widget.dart';
 import 'chat_screen.dart';
+import 'archived_chats_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -41,10 +43,18 @@ class _ChatListScreenState extends State<ChatListScreen>
   String _selectedCategory = 'all'; // 'all', 'personal', 'groups', 'channels', 'favorites'
   bool _isSearching = false;
 
+  late final ScrollController _scrollController;
+  bool _isArchiveRowVisible = false;
+  double _pullDistance = 0.0;
+  final Set<String> _animatedChatIds = {};
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _scrollController = ScrollController();
+    _scrollController.addListener(_onScroll);
 
     // Инициализируем сервисы синхронно для работы StreamBuilder в первом кадре
     _localChatRepo = context.read<LocalChatRepository>();
@@ -61,6 +71,37 @@ class _ChatListScreenState extends State<ChatListScreen>
     });
   }
 
+  void _onScroll() {
+    if (!mounted) return;
+    final offset = _scrollController.offset;
+    
+    // Мгновенно фиксируем появление архива, если оттянули полностью (до упора в -78px)
+    if (offset <= -77.5 && !_isArchiveRowVisible) {
+      setState(() {
+        _isArchiveRowVisible = true;
+        _pullDistance = 0.0;
+      });
+      _scrollController.jumpTo(0.0);
+      try {
+        HapticFeedback.mediumImpact();
+      } catch (_) {}
+      return;
+    }
+
+    // Обновляем расстояние оттягивания для анимации
+    if (offset < 0) {
+      setState(() {
+        _pullDistance = -offset;
+      });
+    } else {
+      if (_pullDistance != 0.0) {
+        setState(() {
+          _pullDistance = 0.0;
+        });
+      }
+    }
+  }
+
   void _onWsConnectionChanged() {
     final isConnected = _presenceService.isConnected.value;
     if (isConnected && !_wasConnected) {
@@ -75,6 +116,8 @@ class _ChatListScreenState extends State<ChatListScreen>
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     _presenceService.isConnected.removeListener(_onWsConnectionChanged);
     _searchController.dispose();
     _searchFocusNode.dispose();
@@ -151,6 +194,8 @@ class _ChatListScreenState extends State<ChatListScreen>
                 isFavorites: chat.isFavorites,
                 otherUser: chat.otherUser,
                 isEncrypted: false,
+                isArchived: chat.isArchived,
+                archivedAt: chat.archivedAt,
               );
             }
           }
@@ -247,6 +292,8 @@ class _ChatListScreenState extends State<ChatListScreen>
         isFavorites: incoming.isFavorites || existing.isFavorites,
         otherUser: incoming.otherUser ?? existing.otherUser,
         isEncrypted: incoming.isEncrypted,
+        isArchived: existing.isArchived,
+        archivedAt: existing.archivedAt,
       );
     }
 
@@ -286,6 +333,8 @@ class _ChatListScreenState extends State<ChatListScreen>
       isFavorites: existing.isFavorites,
       otherUser: existing.otherUser,
       isEncrypted: decrypted == null,
+      isArchived: existing.isArchived,
+      archivedAt: existing.archivedAt,
     );
 
     await _localChatRepo.saveChat(updated);
@@ -319,6 +368,8 @@ class _ChatListScreenState extends State<ChatListScreen>
       isFavorites: chat.isFavorites,
       otherUser: chat.otherUser,
       isEncrypted: false,
+      isArchived: chat.isArchived,
+      archivedAt: chat.archivedAt,
     );
   }
 
@@ -361,24 +412,59 @@ class _ChatListScreenState extends State<ChatListScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: AppStyles.backgroundColor,
-      child: Stack(
-        children: [
-          // 1. Список чатов (в фоне, скроллится под хедер)
-          Positioned.fill(
-            child: _buildContent(),
-          ),
+    return StreamBuilder<List<ChatModel>>(
+      stream: _localChatRepo.watchArchivedChats(),
+      builder: (context, archivedSnapshot) {
+        final archivedChats = archivedSnapshot.data ?? [];
+        final showArchiveRow = archivedChats.isNotEmpty && _searchQuery.isEmpty && _selectedCategory == 'all';
+        final topOffset = MediaQuery.of(context).padding.top + 122.0;
 
-          // 2. Pinned Frosted Glass Header
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _buildPinnedGlassHeader(),
+        return Container(
+          color: AppStyles.backgroundColor,
+          child: Stack(
+            children: [
+              // 1. Список чатов (в фоне, скроллится под хедер)
+              Positioned.fill(
+                child: _buildContent(archivedChats, showArchiveRow, topOffset),
+              ),
+
+              // 2. Floating Archive Row when pulling
+              if (showArchiveRow && !_isArchiveRowVisible && _pullDistance > 0.0)
+                Positioned(
+                  top: topOffset + _pullDistance - 78.0,
+                  left: 0,
+                  right: 0,
+                  height: 78.0,
+                  child: Container(
+                    color: AppStyles.backgroundColor,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          height: 77.0,
+                          child: _buildArchiveRow(archivedChats),
+                        ),
+                        Divider(
+                          color: Colors.white.withOpacity(0.04),
+                          height: 1,
+                          indent: 84,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // 3. Pinned Frosted Glass Header
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _buildPinnedGlassHeader(),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -687,9 +773,144 @@ class _ChatListScreenState extends State<ChatListScreen>
     );
   }
 
-  Widget _buildContent() {
-    final topOffset = MediaQuery.of(context).padding.top + 122.0;
+  Future<void> _archiveChat(ChatModel chat) async {
+    // 1. Оптимистичное локальное обновление UI
+    await _localChatRepo.updateArchiveStatus(chat.id, true);
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Чат "${chat.name}" архивирован'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF1E1E2E),
+          action: SnackBarAction(
+            label: 'Отмена',
+            textColor: Colors.white,
+            onPressed: () async {
+              await _localChatRepo.updateArchiveStatus(chat.id, false);
+              await _chatService.archiveChat(chat.id, false);
+            },
+          ),
+        ),
+      );
+    }
 
+    // 2. Отправка запроса на сервер
+    final success = await _chatService.archiveChat(chat.id, true);
+    if (!success) {
+      await _localChatRepo.updateArchiveStatus(chat.id, false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось архивировать чат на сервере'),
+            backgroundColor: AppStyles.errorColor,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildArchiveRow(List<ChatModel> archivedChats) {
+    final totalUnread = archivedChats.fold<int>(0, (sum, chat) => sum + chat.unreadCount);
+    
+    // Формируем красивое превью имен чатов в архиве
+    final names = archivedChats.take(3).map((c) => c.name).join(', ');
+    final previewText = archivedChats.length > 3 ? '$names и еще ${archivedChats.length - 3}' : names;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => const ArchivedChatsScreen(),
+            ),
+          );
+        },
+        splashColor: Colors.white.withOpacity(0.03),
+        highlightColor: Colors.white.withOpacity(0.01),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          child: Row(
+            children: [
+              // Аватар архива с градиентом и иконкой
+              AvatarWidget(
+                avatar: null,
+                avatarGradient: '6366F1,4F46E5', // Indigo-Violet gradient
+                hasAvatar: false,
+                username: 'Архив',
+                size: 50,
+                icon: FontAwesomeIcons.boxArchive,
+              ),
+              const SizedBox(width: 14),
+
+              // Информация
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Архивированные чаты',
+                      style: TextStyle(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppStyles.textPrimaryColor,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      previewText.isNotEmpty ? previewText : 'Архив',
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w400,
+                        color: AppStyles.textMutedColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Счётчик непрочитанных в архиве
+              if (totalUnread > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  constraints: const BoxConstraints(
+                    minWidth: 20,
+                    minHeight: 20,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6366F1), // Indigo color for archive badge
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    totalUnread > 99 ? '99+' : totalUnread.toString(),
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                )
+              else
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  color: AppStyles.textMutedColor,
+                  size: 14,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent(List<ChatModel> archivedChats, bool showArchiveRow, double topOffset) {
     return StreamBuilder<List<ChatModel>>(
       stream: _localChatRepo.watchAllChats(),
       builder: (context, snapshot) {
@@ -759,7 +980,7 @@ class _ChatListScreenState extends State<ChatListScreen>
           }).toList();
         }
 
-        if (filteredChats.isEmpty) {
+        if (filteredChats.isEmpty && !showArchiveRow) {
           return Padding(
             padding: EdgeInsets.only(top: topOffset),
             child: Center(
@@ -807,21 +1028,76 @@ class _ChatListScreenState extends State<ChatListScreen>
           return b.lastMessageTime!.compareTo(a.lastMessageTime!);
         });
 
+        final listLength = sortedChats.length + (showArchiveRow && _isArchiveRowVisible ? 1 : 0);
+
         return RefreshIndicator(
           onRefresh: _syncChats,
           edgeOffset: topOffset - 24.0,
           color: AppStyles.textPrimaryColor,
           backgroundColor: AppStyles.inputBackgroundColor,
-          child: ListView.builder(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: EdgeInsets.only(
-              top: topOffset,
-              bottom: 100, // Отступ под нижнюю панель навигации
-            ),
-            itemCount: sortedChats.length,
-            itemBuilder: (context, index) {
-              return _buildChatItem(sortedChats[index]);
+          notificationPredicate: (notification) {
+            final hasArchivedChats = archivedChats.isNotEmpty;
+            if (hasArchivedChats && !_isArchiveRowVisible) {
+              return false;
+            }
+            return notification.depth == 0;
+          },
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (ScrollNotification notification) {
+              if (notification is ScrollEndNotification) {
+                final offset = _scrollController.offset;
+                if (offset < -70.0 && !_isArchiveRowVisible) {
+                  setState(() {
+                    _isArchiveRowVisible = true;
+                  });
+                  _scrollController.jumpTo(0.0);
+                }
+              }
+              return false;
             },
+            child: NotificationListener<OverscrollIndicatorNotification>(
+              onNotification: (overscroll) {
+                overscroll.disallowIndicator();
+                return true;
+              },
+              child: ListView.builder(
+                controller: _scrollController,
+                physics: ArchiveRevealScrollPhysics(
+                  isArchiveVisible: _isArchiveRowVisible,
+                  parent: const AlwaysScrollableScrollPhysics(),
+                ),
+                padding: EdgeInsets.only(
+                  top: topOffset,
+                  bottom: 100, // Отступ под нижнюю панель навигации
+                ),
+                itemCount: listLength,
+                itemBuilder: (context, index) {
+                  if (showArchiveRow && _isArchiveRowVisible) {
+                    if (index == 0) {
+                      return SizedBox(
+                        height: 78.0,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              height: 77.0,
+                              child: _buildArchiveRow(archivedChats),
+                            ),
+                            Divider(
+                              color: Colors.white.withOpacity(0.04),
+                              height: 1,
+                              indent: 84,
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return _buildChatItem(sortedChats[index - 1]);
+                  }
+                  return _buildChatItem(sortedChats[index]);
+                },
+              ),
+            ),
           ),
         );
       },
@@ -829,30 +1105,70 @@ class _ChatListScreenState extends State<ChatListScreen>
   }
 
   Widget _buildChatItem(ChatModel chat) {
-    return TweenAnimationBuilder<double>(
-      key: ValueKey(chat.id),
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-      builder: (context, value, child) {
-        return Opacity(
-          opacity: value,
-          child: Transform.translate(
-            offset: Offset(0, 10 * (1.0 - value)),
-            child: child,
-          ),
-        );
-      },
-      child: Column(
-        children: [
-          _buildChatItemContent(chat),
-          Divider(
-            color: Colors.white.withOpacity(0.04),
-            height: 1,
-            indent: 84,
-          ),
-        ],
+    final alreadyAnimated = _animatedChatIds.contains(chat.id);
+    if (!alreadyAnimated) {
+      _animatedChatIds.add(chat.id);
+    }
+
+    final itemContent = Column(
+      children: [
+        _buildChatItemContent(chat),
+        Divider(
+          color: Colors.white.withOpacity(0.04),
+          height: 1,
+          indent: 84,
+        ),
+      ],
+    );
+
+    final skipAnimation = alreadyAnimated || _isArchiveRowVisible;
+
+    return Dismissible(
+      key: ValueKey('active_${chat.id}'),
+      direction: DismissDirection.endToStart,
+      onDismissed: (direction) => _archiveChat(chat),
+      background: Container(
+        color: const Color(0xFF6366F1), // Indigo/Premium violet-blue
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Text(
+              'В архив',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
+            SizedBox(width: 8),
+            FaIcon(
+              FontAwesomeIcons.boxArchive,
+              color: Colors.white,
+              size: 18,
+            ),
+          ],
+        ),
       ),
+      child: skipAnimation
+          ? itemContent
+          : TweenAnimationBuilder<double>(
+              key: ValueKey(chat.id),
+              tween: Tween(begin: 0.0, end: 1.0),
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              builder: (context, value, child) {
+                return Opacity(
+                  opacity: value,
+                  child: Transform.translate(
+                    offset: Offset(0, 10 * (1.0 - value)),
+                    child: child,
+                  ),
+                );
+              },
+              child: itemContent,
+            ),
     );
   }
 
@@ -1072,5 +1388,32 @@ class _ChatListScreenState extends State<ChatListScreen>
     final hasNonce = RegExp(r'nonce\s*[:=]').hasMatch(trimmed);
     final hasCipher = RegExp(r'ciphertext\s*[:=]|encrypted_data\s*[:=]').hasMatch(trimmed);
     return hasNonce && hasCipher;
+  }
+}
+
+class ArchiveRevealScrollPhysics extends BouncingScrollPhysics {
+  final bool isArchiveVisible;
+  const ArchiveRevealScrollPhysics({
+    required this.isArchiveVisible,
+    super.parent,
+  });
+
+  @override
+  ArchiveRevealScrollPhysics applyTo(ScrollPhysics? ancestor) {
+    return ArchiveRevealScrollPhysics(
+      isArchiveVisible: isArchiveVisible,
+      parent: buildParent(ancestor),
+    );
+  }
+
+  @override
+  double applyBoundaryConditions(ScrollMetrics position, double value) {
+    if (!isArchiveVisible && value < -78.0) {
+      if (position.pixels >= -78.0) {
+        return value - (-78.0);
+      }
+      return value - position.pixels;
+    }
+    return super.applyBoundaryConditions(position, value);
   }
 }

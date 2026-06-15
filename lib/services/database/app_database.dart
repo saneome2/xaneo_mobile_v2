@@ -43,7 +43,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -51,7 +51,10 @@ class AppDatabase extends _$AppDatabase {
           await m.createAll();
         },
         onUpgrade: (m, from, to) async {
-          // Выполняется при обновлении версии схемы
+          if (from < 2) {
+            await m.addColumn(chats, chats.isArchived);
+            await m.addColumn(chats, chats.archivedAt);
+          }
         },
         beforeOpen: (details) async {
           // Создаем композитный индекс для оптимизации сортировки и выборки сообщений в чате

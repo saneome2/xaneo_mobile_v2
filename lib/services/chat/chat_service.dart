@@ -9,19 +9,21 @@ class ChatService {
 
   ChatService({required ApiClient apiClient}) : _apiClient = apiClient;
 
-  /// Получить список чатов пользователя
+  /// Получить список чатов пользователя (включая архивные)
   Future<List<ChatModel>> getChats() async {
     try {
       final response = await _apiClient.get(AppConfig.chatsList);
       
       if (response.statusCode == 200 && response.data != null) {
-        // API возвращает {chats: [...]} или [...]
+        // API возвращает {chats: [...], archived_chats: [...]} или [...]
         List<dynamic> data = [];
         if (response.data is List) {
           data = response.data as List;
         } else if (response.data is Map) {
           final mapData = response.data as Map<String, dynamic>;
-          data = mapData['chats'] ?? mapData['results'] ?? [];
+          final activeChats = mapData['chats'] as List? ?? [];
+          final archivedChats = mapData['archived_chats'] as List? ?? [];
+          data = [...activeChats, ...archivedChats];
         }
         
         return data.map((json) => ChatModel.fromJson(json as Map<String, dynamic>)).toList();
@@ -32,6 +34,30 @@ class ChatService {
       // Логируем ошибку
       debugPrint('Error fetching chats: $e');
       return [];
+    }
+  }
+
+  /// Архивировать или разархивировать чат на сервере
+  Future<bool> archiveChat(String chatId, bool isArchived) async {
+    try {
+      final response = await _apiClient.post(
+        '/chats/archive/',
+        data: {
+          'chat_id': chatId,
+          'is_archived': isArchived,
+        },
+      );
+      
+      if (response.statusCode == 200 && response.data != null) {
+        if (response.data is Map) {
+          final data = response.data as Map<String, dynamic>;
+          return data['success'] == true;
+        }
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Error archiving chat $chatId: $e');
+      return false;
     }
   }
 

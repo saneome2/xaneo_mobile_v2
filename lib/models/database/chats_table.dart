@@ -15,4 +15,6 @@ class Chats extends Table {
   BoolColumn get isFavorites => boolean().withDefault(const Constant(false))();
   TextColumn get otherUserJson => text().nullable()();
   BoolColumn get isEncrypted => boolean().withDefault(const Constant(false))();
+  BoolColumn get isArchived => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get archivedAt => dateTime().nullable()();
 }

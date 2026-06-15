@@ -713,6 +713,8 @@ class _ChatScreenState extends State<ChatScreen> {
         isFavorites: widget.chat.isFavorites,
         otherUser: _otherUser,
         isEncrypted: decrypted == null,
+        isArchived: widget.chat.isArchived,
+        archivedAt: widget.chat.archivedAt,
       );
       await _localChatRepo.saveChat(updatedChat);
     }
@@ -752,6 +754,8 @@ class _ChatScreenState extends State<ChatScreen> {
       isFavorites: widget.chat.isFavorites,
       otherUser: _otherUser,
       isEncrypted: false,
+      isArchived: widget.chat.isArchived,
+      archivedAt: widget.chat.archivedAt,
     );
     await _localChatRepo.saveChat(updatedChat);
 

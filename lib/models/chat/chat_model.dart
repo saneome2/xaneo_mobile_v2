@@ -15,6 +15,8 @@ class ChatModel {
   final bool isFavorites;
   final Map<String, dynamic>? otherUser;
   final bool isEncrypted;
+  final bool isArchived;
+  final DateTime? archivedAt;
 
   ChatModel({
     required this.id,
@@ -30,6 +32,8 @@ class ChatModel {
     this.isFavorites = false,
     this.otherUser,
     this.isEncrypted = false,
+    this.isArchived = false,
+    this.archivedAt,
   });
 
   factory ChatModel.fromJson(Map<String, dynamic> json) {
@@ -189,6 +193,9 @@ class ChatModel {
       }
     }
 
+    final isArchived = json['is_archived'] == true;
+    final archivedAt = _parseApiDateTime(json['archived_at']);
+
     return ChatModel(
       id: chatId,
       name: chatName,
@@ -202,6 +209,8 @@ class ChatModel {
       isPersonal: isPersonal,
       isFavorites: isFavorites,
       isEncrypted: isEncrypted,
+      isArchived: isArchived,
+      archivedAt: archivedAt,
       otherUser: otherUserMap.isNotEmpty ? otherUserMap : null,
     );
   }
