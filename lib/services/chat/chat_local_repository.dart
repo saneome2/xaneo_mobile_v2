@@ -155,6 +155,28 @@ class LocalChatRepository {
         .get();
   }
 
+  /// Получение сообщения по его messageId (UUID To-do/Poll)
+  Future<Message?> getMessageByMessageId(String messageId) {
+    return (_db.select(_db.messages)
+          ..where((m) => m.messageId.equals(messageId)))
+        .getSingleOrNull();
+  }
+
+  /// Обновление сообщения (например, статуса To-Do или голосов в опросе)
+  Future<void> updateMessageCompanion(MessagesCompanion companion) async {
+    if (companion.id.present) {
+      final id = companion.id.value;
+      await (_db.update(_db.messages)
+            ..where((m) => m.id.equals(id)))
+          .write(companion);
+    } else if (companion.serverMessageId.present) {
+      final serverId = companion.serverMessageId.value;
+      await (_db.update(_db.messages)
+            ..where((m) => m.serverMessageId.equals(serverId)))
+          .write(companion);
+    }
+  }
+
   ChatModel _mapChatToModel(Chat row) {
     Map<String, dynamic>? otherUser;
     if (row.otherUserJson != null && row.otherUserJson!.isNotEmpty) {

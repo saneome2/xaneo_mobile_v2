@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -196,6 +197,14 @@ class XaneoApp extends StatelessWidget {
                 fontSize: 12,
               );
             }),
+          ),
+          
+          pageTransitionsTheme: const PageTransitionsTheme(
+            builders: <TargetPlatform, PageTransitionsBuilder>{
+              TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+              TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+              TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+            },
           ),
         ),
         

@@ -321,6 +321,58 @@ class ChatModel {
       return '';
     }
 
+    final trimmed = lastMessage!.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        final parsed = jsonDecode(trimmed);
+        if (parsed is Map) {
+          final fileType = parsed['type']?.toString();
+          if (fileType == 'voice' || fileType == 'voice_message') {
+            return '🎙 Голосовое сообщение';
+          } else if (fileType == 'todo_list') {
+            return '✅ Список задач';
+          } else if (fileType == 'poll') {
+            return '📊 Опрос';
+          }
+
+          final mime = (parsed['mime_type'] ?? '').toString().toLowerCase();
+          final fileName = (parsed['file_name'] ?? '').toString().toLowerCase();
+
+          final isImage = mime.startsWith('image/') ||
+              fileName.endsWith('.jpg') ||
+              fileName.endsWith('.jpeg') ||
+              fileName.endsWith('.png') ||
+              fileName.endsWith('.gif') ||
+              fileName.endsWith('.webp') ||
+              fileName.endsWith('.bmp') ||
+              fileName.endsWith('.svg');
+
+          final isVideo = mime.startsWith('video/') ||
+              fileName.endsWith('.mp4') ||
+              fileName.endsWith('.avi') ||
+              fileName.endsWith('.mov') ||
+              fileName.endsWith('.wmv') ||
+              fileName.endsWith('.flv') ||
+              fileName.endsWith('.webm') ||
+              fileName.endsWith('.mkv') ||
+              fileName.endsWith('.3gp') ||
+              fileName.endsWith('.ogv') ||
+              fileName.endsWith('.m4v');
+
+          if (fileType == 'file') {
+            if (isImage) {
+              return '🖼 Фотография';
+            } else if (isVideo) {
+              return '📹 Видеозапись';
+            } else {
+              final originalName = parsed['file_name'] ?? 'Файл';
+              return '📁 $originalName';
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     // Если сообщение зашифровано (base64 payload), показываем плейсхолдер
     if (isEncryptedMessage || _looksLikeStructuredPayload(lastMessage!)) {
       return 'Зашифрованное сообщение';

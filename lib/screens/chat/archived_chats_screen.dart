@@ -11,6 +11,7 @@ import '../../services/chat/chat_local_repository.dart';
 import '../../styles/app_styles.dart';
 import '../../widgets/common/avatar_widget.dart';
 import 'chat_screen.dart';
+import '../../widgets/common/premium_page_route.dart';
 
 class ArchivedChatsScreen extends StatefulWidget {
   const ArchivedChatsScreen({super.key});
@@ -30,12 +31,23 @@ class _ArchivedChatsScreenState extends State<ArchivedChatsScreen> {
   String _searchQuery = '';
   bool _isSearching = false;
 
+  bool _isTransitioning = true;
+
   @override
   void initState() {
     super.initState();
     _localChatRepo = context.read<LocalChatRepository>();
     _chatService = ChatService(apiClient: context.read<ApiClient>());
-    _startRelativeTimeTicker();
+    
+    // Defer rendering of complex UI and lists until route transition completes
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          _isTransitioning = false;
+        });
+        _startRelativeTimeTicker();
+      }
+    });
   }
 
   @override
@@ -118,6 +130,34 @@ class _ArchivedChatsScreenState extends State<ArchivedChatsScreen> {
 
   Widget _buildPinnedGlassHeader() {
     final statusBarHeight = MediaQuery.of(context).padding.top;
+    
+    // BackdropFilter is extremely heavy during page transitions.
+    // Use a solid color without blur while transitioning.
+    if (_isTransitioning) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.85),
+          border: Border(
+            bottom: BorderSide(
+              color: Colors.white.withOpacity(0.06),
+              width: 1,
+            ),
+          ),
+        ),
+        padding: EdgeInsets.only(
+          top: statusBarHeight + 14,
+          bottom: 12,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: SizedBox(
+            height: 44,
+            child: _buildHeaderContent(),
+          ),
+        ),
+      );
+    }
+
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
@@ -395,6 +435,7 @@ class _ArchivedChatsScreenState extends State<ArchivedChatsScreen> {
 
         return ListView.builder(
           physics: const AlwaysScrollableScrollPhysics(),
+          itemExtent: 79.0, // Fixed height for O(1) layout
           padding: EdgeInsets.only(
             top: topOffset,
             bottom: 30,
@@ -453,8 +494,9 @@ class _ArchivedChatsScreenState extends State<ArchivedChatsScreen> {
       child: InkWell(
         onTap: () {
           Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => ChatScreen(chat: chat),
+            PremiumPageRoute(
+              page: ChatScreen(chat: chat),
+              transitionType: PremiumTransitionType.chatReveal,
             ),
           );
         },
@@ -462,7 +504,8 @@ class _ArchivedChatsScreenState extends State<ArchivedChatsScreen> {
         highlightColor: Colors.white.withOpacity(0.01),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Row(
+          child: IgnorePointer(
+            child: Row(
             children: [
               _buildAvatar(chat),
               const SizedBox(width: 14),
@@ -568,6 +611,7 @@ class _ArchivedChatsScreenState extends State<ArchivedChatsScreen> {
               ),
             ],
           ),
+          ), // Close IgnorePointer
         ),
       ),
     );

@@ -17,13 +17,17 @@ class LocalProxy {
           return;
         }
 
+        print('LocalProxy: proxying request for URL: $targetUrl');
+
         try {
           final client = HttpClient();
-          // Это заставит Dart игнорировать ошибки SSL (поскольку мы уже переопределили HttpOverrides глобально)
+          // Explicitly ignore SSL certificate validation for local development
+          client.badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+          
           final targetUri = Uri.parse(targetUrl);
           final clientRequest = await client.getUrl(targetUri);
 
-          // Проброс заголовков (особенно Range для видео)
+          // Propagate headers (especially Range for video)
           request.headers.forEach((name, values) {
             if (name.toLowerCase() == 'host') return;
             clientRequest.headers.set(name, values.join(','));
@@ -34,6 +38,7 @@ class LocalProxy {
           }
 
           final clientResponse = await clientRequest.close();
+          print('LocalProxy: Backend returned status ${clientResponse.statusCode} for $targetUrl');
 
           request.response.statusCode = clientResponse.statusCode;
           clientResponse.headers.forEach((name, values) {
@@ -41,7 +46,8 @@ class LocalProxy {
           });
 
           await clientResponse.pipe(request.response);
-        } catch (e) {
+        } catch (e, stack) {
+          print('LocalProxy handler error for url $targetUrl: $e\n$stack');
           request.response.statusCode = 500;
           await request.response.close();
         }
@@ -51,12 +57,25 @@ class LocalProxy {
     }
   }
 
-  static String getProxyUrl(String targetUrl, {String? jwtToken}) {
+  static String getProxyUrl(String targetUrl, {String? jwtToken, String? ext}) {
     if (_server == null) return targetUrl;
+    
+    String path = '/media';
+    if (ext != null) {
+      path = '/media$ext';
+    } else {
+      final lower = targetUrl.toLowerCase();
+      if (lower.contains('.m4a')) path = '/audio.m4a';
+      else if (lower.contains('.mp3')) path = '/audio.mp3';
+      else if (lower.contains('.mp4')) path = '/video.mp4';
+      else if (lower.contains('.m3u8')) path = '/video.m3u8';
+    }
+
     final uri = Uri(
       scheme: 'http',
       host: _server!.address.address,
       port: _server!.port,
+      path: path,
       queryParameters: {
         'url': targetUrl,
         if (jwtToken != null) 'token': jwtToken,

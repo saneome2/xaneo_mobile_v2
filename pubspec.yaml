@@ -51,6 +51,9 @@ dependencies:
   # URL Launcher
   url_launcher: ^6.2.5
 
+  # Audio recording
+  record: ^7.1.0
+
   # Biometric (optional - for future)
   local_auth: ^2.1.8
   font_awesome_flutter: ^11.0.0

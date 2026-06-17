@@ -26,8 +26,12 @@ import '../../widgets/common/chat_info_modal.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
+import '../../utils/local_proxy.dart';
+import 'package:record/record.dart';
+import 'widgets/todo_poll_widgets.dart';
 
 class ChatScreen extends StatefulWidget {
   final ChatModel chat;
@@ -51,6 +55,13 @@ class _ChatScreenState extends State<ChatScreen> {
   int? _localChatId;
   bool _isLoading = true;
   bool _isVoiceMode = true;
+
+  // Recording state variables
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _isRecording = false;
+  Timer? _recordingTimer;
+  int _recordingDurationSeconds = 0;
+  double _dragOffset = 0.0;
   late Stream<List<Message>> _messagesStream;
 
   // Local copy of otherUser to reflect WS status updates
@@ -125,6 +136,8 @@ class _ChatScreenState extends State<ChatScreen> {
     for (final timer in _typingTimers.values) {
       timer.cancel();
     }
+    _recordingTimer?.cancel();
+    _audioRecorder.dispose();
     super.dispose();
   }
 
@@ -194,6 +207,8 @@ class _ChatScreenState extends State<ChatScreen> {
       localId = await _localChatRepo.getLocalChatId(widget.chat.id);
     }
 
+    // Let it build the initial list straight away to avoid post-transition jank
+
     if (localId != null) {
       final localCount = await _localChatRepo.getMessageCount(localId);
       
@@ -208,9 +223,6 @@ class _ChatScreenState extends State<ChatScreen> {
           _updateStream();
         });
       }
-
-      // Allow page transition animation to finish before heavy network and crypto tasks
-      await Future.delayed(const Duration(milliseconds: 300));
 
       if (localCount > 0) {
         // If we have messages locally, sync the latest ones in the background without blocking the UI
@@ -320,6 +332,11 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           }
 
+          final messageType = item['message_type']?.toString();
+          final messageId = item['message_id']?.toString();
+          final completionStatusVal = item['completion_status'] != null ? jsonEncode(item['completion_status']) : null;
+          final votesByOptionVal = item['votes_by_option'] != null ? jsonEncode(item['votes_by_option']) : null;
+
           companions.add(
             MessagesCompanion(
               serverMessageId: Value(msgId),
@@ -328,6 +345,10 @@ class _ChatScreenState extends State<ChatScreen> {
               textContent: Value(decrypted ?? encryptedText),
               timestamp: Value(timestamp),
               fileUrl: Value(fileInfoJson),
+              messageType: Value(messageType),
+              messageId: Value(messageId),
+              completionStatus: Value(completionStatusVal),
+              votesByOption: Value(votesByOptionVal),
             ),
           );
         }
@@ -462,6 +483,11 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           }
 
+          final messageType = item['message_type']?.toString();
+          final messageId = item['message_id']?.toString();
+          final completionStatusVal = item['completion_status'] != null ? jsonEncode(item['completion_status']) : null;
+          final votesByOptionVal = item['votes_by_option'] != null ? jsonEncode(item['votes_by_option']) : null;
+
           companions.add(
             MessagesCompanion(
               serverMessageId: Value(msgId),
@@ -470,6 +496,10 @@ class _ChatScreenState extends State<ChatScreen> {
               textContent: Value(decrypted ?? encryptedText),
               timestamp: Value(timestamp),
               fileUrl: Value(fileInfoJson),
+              messageType: Value(messageType),
+              messageId: Value(messageId),
+              completionStatus: Value(completionStatusVal),
+              votesByOption: Value(votesByOptionVal),
             ),
           );
         }
@@ -633,10 +663,20 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    if (type != 'encrypted_message') return;
+    if (type != 'encrypted_message' && type != 'poll_message' && type != 'todo_list_message') {
+      if (type == 'todo_completion_update') {
+        await _handleTodoCompletionUpdate(event);
+        return;
+      }
+      if (type == 'poll_vote_update') {
+        await _handlePollVoteUpdate(event);
+        return;
+      }
+      return;
+    }
 
     final chatId = event['chat_id']?.toString();
-    final encryptedText = event['encrypted_text']?.toString();
+    final encryptedText = event['encrypted_text']?.toString() ?? event['encrypted_content']?.toString();
 
     if (chatId == null || chatId != widget.chat.id || encryptedText == null) return;
 
@@ -646,7 +686,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final localId = _localChatId;
     if (localId != null) {
       final timestamp = _parseDateTime(event['created_at']) ?? DateTime.now();
-      final senderId = event['author_username']?.toString() ?? event['author_id']?.toString() ?? event['sender_id']?.toString() ?? 'system';
+      final senderId = event['author_username']?.toString() ??
+          event['author_id']?.toString() ??
+          event['sender_id']?.toString() ??
+          event['creator_username']?.toString() ??
+          event['creator_id']?.toString() ??
+          'system';
       final msgId = event['id']?.toString() ?? 'ws_${DateTime.now().millisecondsSinceEpoch}';
 
       String? fileInfoJson;
@@ -676,6 +721,15 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
 
+      String? messageType = event['message_type']?.toString();
+      if (messageType == null) {
+        if (type == 'todo_list_message') messageType = 'todo_list';
+        if (type == 'poll_message') messageType = 'poll';
+      }
+      final messageId = event['message_id']?.toString();
+      final completionStatusVal = event['completion_status'] != null ? jsonEncode(event['completion_status']) : null;
+      final votesByOptionVal = event['votes_by_option'] != null ? jsonEncode(event['votes_by_option']) : null;
+
       final bool isAlreadyKnown = _initialMessageIds.contains(msgId) || _animatedMessageIds.contains(msgId);
 
       await _localChatRepo.saveMessage(
@@ -686,6 +740,10 @@ class _ChatScreenState extends State<ChatScreen> {
           textContent: Value(decrypted ?? encryptedText),
           timestamp: Value(timestamp),
           fileUrl: Value(fileInfoJson),
+          messageType: Value(messageType),
+          messageId: Value(messageId),
+          completionStatus: Value(completionStatusVal),
+          votesByOption: Value(votesByOptionVal),
         ),
       );
 
@@ -721,6 +779,96 @@ class _ChatScreenState extends State<ChatScreen> {
         archivedAt: widget.chat.archivedAt,
       );
       await _localChatRepo.saveChat(updatedChat);
+    }
+  }
+
+  Future<void> _handleTodoCompletionUpdate(Map<String, dynamic> event) async {
+    final messageId = event['todo_message_id']?.toString();
+    final itemIndex = event['item_index'];
+    final isCompleted = event['is_completed'] as bool?;
+
+    if (messageId == null || itemIndex == null || isCompleted == null) return;
+
+    final repo = context.read<LocalChatRepository>();
+    final dbMsg = await repo.getMessageByMessageId(messageId);
+    if (dbMsg != null) {
+      final statusMap = dbMsg.completionStatus != null
+          ? Map<String, dynamic>.from(jsonDecode(dbMsg.completionStatus!))
+          : <String, dynamic>{};
+
+      statusMap[itemIndex.toString()] = isCompleted;
+      final updatedStatus = jsonEncode(statusMap);
+
+      await repo.updateMessageCompanion(
+        MessagesCompanion(
+          id: Value(dbMsg.id),
+          completionStatus: Value(updatedStatus),
+        ),
+      );
+    }
+  }
+
+  Future<void> _handlePollVoteUpdate(Map<String, dynamic> event) async {
+    final messageId = event['poll_message_id']?.toString();
+    if (messageId == null) return;
+
+    final optionId = event['option_id']?.toString();
+    if (optionId == null) return;
+
+    final removeVote = event['remove_vote'] == true;
+    final userId = event['user_id']?.toString();
+    final username = event['username']?.toString();
+
+    final repo = context.read<LocalChatRepository>();
+    final dbMsg = await repo.getMessageByMessageId(messageId);
+    if (dbMsg != null) {
+      // 1. Update votesByOption
+      Map<String, dynamic> votesByOption = {};
+      if (dbMsg.votesByOption != null && dbMsg.votesByOption!.isNotEmpty) {
+        try {
+          votesByOption = Map<String, dynamic>.from(jsonDecode(dbMsg.votesByOption!));
+        } catch (_) {}
+      }
+
+      final int currentOptionCount = votesByOption[optionId] is num
+          ? (votesByOption[optionId] as num).toInt()
+          : int.tryParse(votesByOption[optionId]?.toString() ?? '') ?? 0;
+
+      if (removeVote) {
+        votesByOption[optionId] = (currentOptionCount - 1).clamp(0, 999999);
+      } else {
+        votesByOption[optionId] = currentOptionCount + 1;
+      }
+
+      // 2. Update userVotes (if this vote belongs to the current user)
+      final currentUser = context.read<AuthProvider>().user;
+      final isCurrentUser = (currentUser != null &&
+          (userId == currentUser.id.toString() || username == currentUser.username));
+
+      List<String> userVotes = [];
+      if (dbMsg.userVotes != null && dbMsg.userVotes!.isNotEmpty) {
+        try {
+          userVotes = List<String>.from(jsonDecode(dbMsg.userVotes!));
+        } catch (_) {}
+      }
+
+      if (isCurrentUser) {
+        if (removeVote) {
+          userVotes.remove(optionId);
+        } else {
+          if (!userVotes.contains(optionId)) {
+            userVotes.add(optionId);
+          }
+        }
+      }
+
+      await repo.updateMessageCompanion(
+        MessagesCompanion(
+          id: Value(dbMsg.id),
+          votesByOption: Value(jsonEncode(votesByOption)),
+          userVotes: Value(jsonEncode(userVotes)),
+        ),
+      );
     }
   }
 
@@ -786,6 +934,205 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _startRecording() async {
+    try {
+      final hasPermission = await _audioRecorder.hasPermission();
+      if (!hasPermission) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Требуется разрешение на запись аудио')),
+          );
+        }
+        return;
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final path = '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+
+      // Haptic feedback
+      try {
+        await Feedback.forLongPress(context);
+      } catch (_) {}
+
+      await _audioRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          sampleRate: 44100,
+          bitRate: 64000,
+        ),
+        path: path,
+      );
+
+      _sendTypingEvent(true, action: 'recording_voice');
+
+      if (mounted) {
+        setState(() {
+          _isRecording = true;
+          _recordingDurationSeconds = 0;
+          _dragOffset = 0.0;
+        });
+      }
+
+      _recordingTimer?.cancel();
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (mounted && _isRecording) {
+          setState(() {
+            _recordingDurationSeconds++;
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('Error starting recording: $e');
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    if (!_isRecording) return;
+    try {
+      _recordingTimer?.cancel();
+      _recordingTimer = null;
+      
+      final path = await _audioRecorder.stop();
+      if (path != null) {
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      }
+      
+      _sendTypingEvent(false);
+
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Запись отменена'),
+            backgroundColor: Colors.redAccent.withValues(alpha: 0.9),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error cancelling recording: $e');
+    }
+  }
+
+  Future<void> _stopAndSendRecording() async {
+    if (!_isRecording) return;
+    try {
+      _recordingTimer?.cancel();
+      _recordingTimer = null;
+
+      final path = await _audioRecorder.stop();
+      _sendTypingEvent(false);
+
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+        });
+      }
+
+      if (path == null) return;
+
+      final duration = _recordingDurationSeconds;
+      if (duration < 1) {
+        // Delete file if too short
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Слишком короткое сообщение'),
+              backgroundColor: Colors.orangeAccent.withValues(alpha: 0.9),
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        }
+        return;
+      }
+
+      // Upload file
+      await _uploadAndSendVoiceMessage(path, duration);
+    } catch (e) {
+      debugPrint('Error stopping recording: $e');
+    }
+  }
+
+  Future<void> _uploadAndSendVoiceMessage(String path, int duration) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return;
+
+      final filename = path.split('/').last;
+      
+      final formData = FormData.fromMap({
+        'file_type': 'audio',
+        'chat_id': widget.chat.id,
+        'file': await MultipartFile.fromFile(
+          file.path,
+          filename: filename,
+        ),
+        'mime_type': 'audio/m4a',
+      });
+
+      final apiClient = context.read<ApiClient>();
+      
+      final response = await apiClient.post(
+        '/api/files/upload/',
+        data: formData,
+      );
+
+      if (response.statusCode == 201 && response.data['success'] == true) {
+        final fileId = response.data['file_id'] as String;
+        
+        final cryptoService = context.read<CryptoService>();
+        
+        final voiceMetadata = jsonEncode({
+          'type': 'voice',
+          'file_id': fileId,
+          'duration': duration,
+          'mime_type': 'audio/m4a',
+        });
+
+        debugPrint('Voice metadata prepared: $voiceMetadata');
+        final encryptedText = await cryptoService.encryptMessage(voiceMetadata, widget.chat.id);
+
+        if (encryptedText != null) {
+          await _chatWebSocketService.send({
+            'type': 'voice_message',
+            'file_id': fileId,
+            'duration': duration,
+            'chat_id': widget.chat.id,
+            'encrypted_text': encryptedText,
+          });
+          debugPrint('Voice message sent over WS successfully!');
+        } else {
+          debugPrint('Failed to encrypt voice metadata');
+        }
+      } else {
+        throw Exception('Failed to upload file to backend');
+      }
+    } catch (e) {
+      debugPrint('Error uploading/sending voice: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка отправки голосового сообщения: $e')),
+        );
+      }
+    }
+  }
+
+  String _formatRecordingDuration(int seconds) {
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
   void _applyFormatting(String prefix, String suffix, EditableTextState editableTextState) {
     final value = editableTextState.textEditingValue;
     final text = value.text;
@@ -820,40 +1167,43 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final currentUser = context.watch<AuthProvider>().user;
 
-    return Scaffold(
-      backgroundColor: AppStyles.backgroundColor,
-      resizeToAvoidBottomInset: true,
-      extendBodyBehindAppBar: true,
-      appBar: _buildAppBar(context),
-      body: Stack(
-        children: [
-          // Stunning Liquid Glass Background decoration
-          _buildGlassBackground(),
+    return Provider<ChatWebSocketService>.value(
+      value: _chatWebSocketService,
+      child: Scaffold(
+        backgroundColor: AppStyles.backgroundColor,
+        resizeToAvoidBottomInset: true,
+        extendBodyBehindAppBar: true,
+        appBar: _buildAppBar(context),
+        body: Stack(
+          children: [
+            // Stunning Liquid Glass Background decoration
+            _buildGlassBackground(),
 
-          // Main Chat Area
-          Column(
-            children: [
-              Expanded(
-                child: _isLoading
-                    ? const Center(
-                        child: CircularProgressIndicator(
-                          color: Colors.white54,
-                        ),
-                      )
-                    : _buildMessagesList(currentUser),
-              ),
-              
-              // Compact Input Bar
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                  child: _buildInputArea(context),
+            // Main Chat Area
+            Column(
+              children: [
+                Expanded(
+                  child: _isLoading
+                      ? const Center(
+                          child: CircularProgressIndicator(
+                            color: Colors.white54,
+                          ),
+                        )
+                      : _buildMessagesList(currentUser),
                 ),
-              ),
-            ],
-          ),
-        ],
+                
+                // Compact Input Bar
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    child: _buildInputArea(context),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1444,7 +1794,11 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
         borderRadius: BorderRadius.circular(28),
       ),
-      child: TextField(
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.centerLeft,
+        children: [
+          TextField(
             controller: _messageController,
             focusNode: _messageFocusNode,
             style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.3),
@@ -1534,15 +1888,15 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.85),
+                          color: Colors.black.withValues(alpha: 0.85),
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
-                            color: Colors.white.withOpacity(0.15),
+                            color: Colors.white.withValues(alpha: 0.15),
                             width: 1,
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
+                              color: Colors.black.withValues(alpha: 0.3),
                               blurRadius: 10,
                               offset: const Offset(0, 4),
                             ),
@@ -1563,29 +1917,29 @@ class _ChatScreenState extends State<ChatScreen> {
             },
             decoration: InputDecoration(
               hintText: 'Сообщение...',
-              hintStyle: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 15),
+              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35), fontSize: 15),
               filled: true,
-              fillColor: Colors.white.withOpacity(0.08),
+              fillColor: Colors.white.withValues(alpha: 0.08),
               isDense: true,
               contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(28),
                 borderSide: BorderSide(
-                  color: Colors.white.withOpacity(0.15),
+                  color: Colors.white.withValues(alpha: 0.15),
                   width: 1,
                 ),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(28),
                 borderSide: BorderSide(
-                  color: Colors.white.withOpacity(0.15),
+                  color: Colors.white.withValues(alpha: 0.15),
                   width: 1,
                 ),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(28),
                 borderSide: BorderSide(
-                  color: Colors.white.withOpacity(0.25),
+                  color: Colors.white.withValues(alpha: 0.25),
                   width: 1,
                 ),
               ),
@@ -1600,7 +1954,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     padding: const EdgeInsets.all(4.0),
                     child: FaIcon(
                       FontAwesomeIcons.faceSmile,
-                      color: Colors.white.withOpacity(0.55),
+                      color: Colors.white.withValues(alpha: 0.55),
                       size: 20,
                     ),
                   ),
@@ -1625,7 +1979,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         padding: const EdgeInsets.all(8.0),
                         child: FaIcon(
                           FontAwesomeIcons.plus,
-                          color: Colors.white.withOpacity(0.65),
+                          color: Colors.white.withValues(alpha: 0.65),
                           size: 18,
                         ),
                       ),
@@ -1656,7 +2010,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                       shape: BoxShape.circle,
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.white.withOpacity(0.2),
+                                          color: Colors.white.withValues(alpha: 0.2),
                                           blurRadius: 10,
                                           offset: const Offset(0, 3),
                                         ),
@@ -1671,52 +2025,69 @@ class _ChatScreenState extends State<ChatScreen> {
                                     ),
                                   ),
                                 )
-                              : StatefulBuilder(
-                                  builder: (context, setStateLocal) {
-                                    return GestureDetector(
-                                      key: const ValueKey('mic_video_toggle'),
-                                      onTap: () {
-                                        setStateLocal(() {
-                                          _isVoiceMode = !_isVoiceMode;
-                                        });
-                                      },
-                                      child: Container(
-                                        width: 38,
-                                        height: 38,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withOpacity(0.1),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: Center(
-                                          child: AnimatedSwitcher(
-                                            duration: const Duration(milliseconds: 300),
-                                            transitionBuilder: (Widget child, Animation<double> animation) {
-                                              return RotationTransition(
-                                                turns: child.key == const ValueKey('mic')
-                                                    ? Tween<double>(begin: 0.15, end: 0.0).animate(animation)
-                                                    : Tween<double>(begin: -0.15, end: 0.0).animate(animation),
-                                                child: ScaleTransition(
-                                                  scale: animation,
-                                                  child: FadeTransition(
-                                                    opacity: animation,
-                                                    child: child,
-                                                  ),
-                                                ),
-                                              );
-                                            },
-                                            child: FaIcon(
-                                              _isVoiceMode
-                                                  ? FontAwesomeIcons.microphone
-                                                  : FontAwesomeIcons.video,
-                                              key: ValueKey(_isVoiceMode ? 'mic' : 'video'),
-                                              color: Colors.white,
-                                              size: 16,
+                              : GestureDetector(
+                                  key: const ValueKey('mic_video_toggle'),
+                                  onLongPressStart: (_) async {
+                                    if (_isVoiceMode) {
+                                      await _startRecording();
+                                    }
+                                  },
+                                  onLongPressMoveUpdate: (details) {
+                                    if (_isVoiceMode && _isRecording) {
+                                      setState(() {
+                                        _dragOffset = details.offsetFromOrigin.dx.clamp(-120.0, 0.0);
+                                      });
+                                      if (_dragOffset < -100) {
+                                        _cancelRecording();
+                                      }
+                                    }
+                                  },
+                                  onLongPressEnd: (_) async {
+                                    if (_isVoiceMode && _isRecording) {
+                                      await _stopAndSendRecording();
+                                    }
+                                  },
+                                  onTap: () {
+                                    setState(() {
+                                      _isVoiceMode = !_isVoiceMode;
+                                    });
+                                  },
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    width: _isRecording ? 42 : 38,
+                                    height: _isRecording ? 42 : 38,
+                                    decoration: BoxDecoration(
+                                      color: _isRecording ? Colors.red : Colors.white.withValues(alpha: 0.1),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Center(
+                                      child: AnimatedSwitcher(
+                                        duration: const Duration(milliseconds: 300),
+                                        transitionBuilder: (Widget child, Animation<double> animation) {
+                                          return RotationTransition(
+                                            turns: child.key == const ValueKey('mic')
+                                                ? Tween<double>(begin: 0.15, end: 0.0).animate(animation)
+                                                : Tween<double>(begin: -0.15, end: 0.0).animate(animation),
+                                            child: ScaleTransition(
+                                              scale: animation,
+                                              child: FadeTransition(
+                                                opacity: animation,
+                                                child: child,
+                                              ),
                                             ),
-                                          ),
+                                          );
+                                        },
+                                        child: FaIcon(
+                                          _isVoiceMode
+                                              ? FontAwesomeIcons.microphone
+                                              : FontAwesomeIcons.video,
+                                          key: ValueKey(_isVoiceMode ? 'mic' : 'video'),
+                                          color: Colors.white,
+                                          size: _isRecording ? 18 : 16,
                                         ),
                                       ),
-                                    );
-                                  },
+                                    ),
+                                  ),
                                 ),
                         );
                       },
@@ -1730,6 +2101,58 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
+          if (_isRecording)
+            Positioned(
+              left: 4,
+              top: 4,
+              bottom: 4,
+              right: 80,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  color: const Color(0xFF161618),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      const _BlinkingRedDot(),
+                      const SizedBox(width: 10),
+                      Text(
+                        _formatRecordingDuration(_recordingDurationSeconds),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Transform.translate(
+                        offset: Offset(_dragOffset, 0),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.chevron_left, 
+                              color: Colors.white.withValues(alpha: 0.5), 
+                              size: 16,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              'Смахните для отмены',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5), 
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -2932,9 +3355,15 @@ class MessageBubble extends StatelessWidget {
     if (message.textContent.trim().startsWith('{')) {
       try {
         final parsed = jsonDecode(message.textContent);
-        if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice') && parsed['file_id'] != null) {
-          fileData = Map<String, dynamic>.from(parsed);
-          displayContent = ''; // Чистое файловое сообщение без текстовой подписи
+        if (parsed is Map) {
+          final pType = parsed['type'];
+          if ((pType == 'file' || pType == 'voice' || pType == 'voice_message') && parsed['file_id'] != null) {
+            fileData = Map<String, dynamic>.from(parsed);
+            displayContent = ''; // Чистое файловое сообщение без текстовой подписи
+          } else if (pType == 'todo_list' || pType == 'poll') {
+            fileData = Map<String, dynamic>.from(parsed);
+            displayContent = '';
+          }
         }
       } catch (_) {}
     }
@@ -2998,10 +3427,43 @@ class MessageBubble extends StatelessWidget {
         absoluteUrl = '$hostUrl$prefix$fileUrlSuffix${accessToken != null ? "?token=$accessToken" : ""}';
       }
 
+      final isVoice = fileData['type'] == 'voice' ||
+          mime.startsWith('audio/') ||
+          lowerName.endsWith('.ogg') ||
+          lowerName.endsWith('.webm') ||
+          lowerName.endsWith('.opus') ||
+          lowerName.endsWith('.wav') ||
+          lowerName.endsWith('.mp3');
+
       isOnlyFile = displayContent.isEmpty;
       isOnlyMedia = isOnlyFile && (isImage || isVideo);
 
-      if (isImage) {
+      if (fileData['type'] == 'todo_list') {
+        attachmentWidget = TodoListWidget(
+          message: message,
+          chatWebSocketService: context.watch<ChatWebSocketService>(),
+          localChatRepo: context.watch<LocalChatRepository>(),
+          onStateChanged: () {},
+        );
+      } else if (fileData['type'] == 'poll') {
+        attachmentWidget = PollWidget(
+          message: message,
+          chatWebSocketService: context.watch<ChatWebSocketService>(),
+          localChatRepo: context.watch<LocalChatRepository>(),
+          onStateChanged: () {},
+        );
+      } else if (isVoice) {
+        final duration = fileData['duration'] is num
+            ? (fileData['duration'] as num).toInt()
+            : int.tryParse(fileData['duration']?.toString() ?? '') ?? 0;
+        attachmentWidget = VoiceMessagePlayer(
+          audioUrl: absoluteUrl,
+          duration: duration,
+          jwtToken: jwtToken,
+          isMe: isMe,
+          mimeType: fileData['mime_type']?.toString() ?? mime,
+        );
+      } else if (isImage) {
         attachmentWidget = GestureDetector(
           onTap: () => _showFullScreenImage(context, absoluteUrl, senderRealName, message.timestamp),
           child: Container(
@@ -3504,5 +3966,333 @@ class _FullScreenVideoPlayerState extends State<_FullScreenVideoPlayer> {
         ),
       );
     }
+  }
+}
+
+class VoiceMessagePlayer extends StatefulWidget {
+  final String audioUrl;
+  final int duration;
+  final String? jwtToken;
+  final bool isMe;
+  final String? mimeType;
+
+  const VoiceMessagePlayer({
+    super.key,
+    required this.audioUrl,
+    required this.duration,
+    required this.jwtToken,
+    required this.isMe,
+    this.mimeType,
+  });
+
+  @override
+  State<VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
+}
+
+class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
+  VideoPlayerController? _controller;
+  bool _isInitialized = false;
+  bool _isPlaying = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _duration = Duration(seconds: widget.duration);
+    _initializeController();
+  }
+
+  Future<void> _initializeController() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      
+      // Determine file extension
+      String ext = '.m4a'; // default
+      if (widget.mimeType != null) {
+        final mime = widget.mimeType!.toLowerCase();
+        if (mime.contains('webm')) {
+          ext = '.webm';
+        } else if (mime.contains('ogg') || mime.contains('opus')) {
+          ext = '.ogg';
+        } else if (mime.contains('mp3')) {
+          ext = '.mp3';
+        } else if (mime.contains('wav')) {
+          ext = '.wav';
+        } else if (mime.contains('aac')) {
+          ext = '.aac';
+        }
+      }
+
+      // Generate a unique, safe filename based on the URL hash or sanitized string
+      final safeName = widget.audioUrl.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+      final localFilePath = '${tempDir.path}/voice_$safeName$ext';
+      final file = File(localFilePath);
+
+      // Download file if it does not exist locally
+      if (!await file.exists()) {
+        final freshToken = await TokenStorage().getAccessToken();
+        final dio = Dio();
+        // Configure SSL bypass for local development/self-signed certs
+        (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
+          final client = HttpClient();
+          client.badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+          return client;
+        };
+
+        final response = await dio.download(
+          widget.audioUrl,
+          localFilePath,
+          options: Options(
+            headers: freshToken != null && freshToken.isNotEmpty
+                ? {'Authorization': 'Bearer $freshToken'}
+                : {},
+          ),
+        );
+        if (response.statusCode != 200) {
+          throw Exception('Failed to download audio file: ${response.statusCode}');
+        }
+      }
+
+      _controller = VideoPlayerController.file(file);
+      await _controller!.initialize();
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+          _duration = _controller!.value.duration;
+        });
+        _controller!.addListener(_onControllerUpdate);
+      }
+    } catch (e) {
+      debugPrint('Voice playback init error: $e');
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+        });
+      }
+    }
+  }
+
+  void _onControllerUpdate() {
+    if (_controller == null || !mounted) return;
+    final value = _controller!.value;
+    setState(() {
+      _isPlaying = value.isPlaying;
+      _position = value.position;
+      if (value.position >= value.duration && _isPlaying) {
+        _isPlaying = false;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller?.removeListener(_onControllerUpdate);
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  String _formatDuration(Duration d) {
+    final s = d.inSeconds % 60;
+    final m = d.inMinutes;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
+  void _togglePlay() {
+    if (_controller == null || !_isInitialized) return;
+    if (_isPlaying) {
+      _controller!.pause();
+    } else {
+      if (_controller!.value.position >= _controller!.value.duration) {
+        _controller!.seekTo(Duration.zero);
+      }
+      _controller!.play();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hasError) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: Colors.white.withValues(alpha: 0.5), size: 18),
+            const SizedBox(width: 8),
+            Text(
+              'Ошибка воспроизведения',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.5),
+                fontSize: 12,
+                fontFamily: AppStyles.fontFamily,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final playBtnColor = widget.isMe ? const Color(0xFF4ADE80) : Colors.white;
+    final iconColor = Colors.black;
+    final activeTrackColor = widget.isMe ? const Color(0xFF4ADE80) : Colors.white;
+    final inactiveTrackColor = Colors.white.withValues(alpha: 0.2);
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 240),
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Play/Pause circular button (Telegram-like minimalist design)
+          GestureDetector(
+            onTap: _isInitialized ? _togglePlay : null,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: playBtnColor,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: playBtnColor.withValues(alpha: 0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Center(
+                child: !_isInitialized
+                    ? SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(iconColor.withValues(alpha: 0.5)),
+                        ),
+                      )
+                    : Icon(
+                        _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        color: iconColor,
+                        size: 26,
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          // Progress & Duration column
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Minimalistic Slider
+                SizedBox(
+                  height: 16,
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 2.5,
+                      trackShape: _CustomTrackShape(),
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 4.5,
+                        elevation: 2,
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                      activeTrackColor: activeTrackColor,
+                      inactiveTrackColor: inactiveTrackColor,
+                      thumbColor: activeTrackColor,
+                    ),
+                    child: Slider(
+                      value: _position.inMilliseconds.toDouble(),
+                      min: 0.0,
+                      max: _duration.inMilliseconds.toDouble() > 0.0
+                          ? _duration.inMilliseconds.toDouble()
+                          : 1.0,
+                      onChanged: _isInitialized
+                          ? (val) {
+                              _controller?.seekTo(Duration(milliseconds: val.toInt()));
+                            }
+                          : null,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                // Time / Progress Text
+                Text(
+                  _isPlaying ? _formatDuration(_position) : _formatDuration(_duration),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.5),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.2,
+                    fontFamily: AppStyles.fontFamily,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CustomTrackShape extends RoundedRectSliderTrackShape {
+  @override
+  Rect getPreferredRect({
+    required RenderBox parentBox,
+    Offset offset = Offset.zero,
+    required SliderThemeData sliderTheme,
+    bool isEnabled = false,
+    bool isDiscrete = false,
+  }) {
+    final double trackHeight = sliderTheme.trackHeight ?? 2.0;
+    final double trackLeft = offset.dx;
+    final double trackTop = offset.dy + (parentBox.size.height - trackHeight) / 2;
+    final double trackWidth = parentBox.size.width;
+    return Rect.fromLTWH(trackLeft, trackTop, trackWidth, trackHeight);
+  }
+}
+
+class _BlinkingRedDot extends StatefulWidget {
+  const _BlinkingRedDot();
+
+  @override
+  State<_BlinkingRedDot> createState() => _BlinkingRedDotState();
+}
+
+class _BlinkingRedDotState extends State<_BlinkingRedDot> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _controller,
+      child: Container(
+        width: 10,
+        height: 10,
+        decoration: const BoxDecoration(
+          color: Colors.red,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
   }
 }

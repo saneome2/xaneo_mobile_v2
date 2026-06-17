@@ -854,6 +854,36 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
   late final GeneratedColumn<DateTime> timestamp = GeneratedColumn<DateTime>(
       'timestamp', aliasedName, false,
       type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _messageTypeMeta =
+      const VerificationMeta('messageType');
+  @override
+  late final GeneratedColumn<String> messageType = GeneratedColumn<String>(
+      'message_type', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _messageIdMeta =
+      const VerificationMeta('messageId');
+  @override
+  late final GeneratedColumn<String> messageId = GeneratedColumn<String>(
+      'message_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _completionStatusMeta =
+      const VerificationMeta('completionStatus');
+  @override
+  late final GeneratedColumn<String> completionStatus = GeneratedColumn<String>(
+      'completion_status', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _votesByOptionMeta =
+      const VerificationMeta('votesByOption');
+  @override
+  late final GeneratedColumn<String> votesByOption = GeneratedColumn<String>(
+      'votes_by_option', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _userVotesMeta =
+      const VerificationMeta('userVotes');
+  @override
+  late final GeneratedColumn<String> userVotes = GeneratedColumn<String>(
+      'user_votes', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -863,7 +893,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         textContent,
         fileUrl,
         isRead,
-        timestamp
+        timestamp,
+        messageType,
+        messageId,
+        completionStatus,
+        votesByOption,
+        userVotes
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -920,6 +955,32 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     } else if (isInserting) {
       context.missing(_timestampMeta);
     }
+    if (data.containsKey('message_type')) {
+      context.handle(
+          _messageTypeMeta,
+          messageType.isAcceptableOrUnknown(
+              data['message_type']!, _messageTypeMeta));
+    }
+    if (data.containsKey('message_id')) {
+      context.handle(_messageIdMeta,
+          messageId.isAcceptableOrUnknown(data['message_id']!, _messageIdMeta));
+    }
+    if (data.containsKey('completion_status')) {
+      context.handle(
+          _completionStatusMeta,
+          completionStatus.isAcceptableOrUnknown(
+              data['completion_status']!, _completionStatusMeta));
+    }
+    if (data.containsKey('votes_by_option')) {
+      context.handle(
+          _votesByOptionMeta,
+          votesByOption.isAcceptableOrUnknown(
+              data['votes_by_option']!, _votesByOptionMeta));
+    }
+    if (data.containsKey('user_votes')) {
+      context.handle(_userVotesMeta,
+          userVotes.isAcceptableOrUnknown(data['user_votes']!, _userVotesMeta));
+    }
     return context;
   }
 
@@ -945,6 +1006,16 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
           .read(DriftSqlType.bool, data['${effectivePrefix}is_read'])!,
       timestamp: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}timestamp'])!,
+      messageType: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}message_type']),
+      messageId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}message_id']),
+      completionStatus: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}completion_status']),
+      votesByOption: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}votes_by_option']),
+      userVotes: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}user_votes']),
     );
   }
 
@@ -963,6 +1034,11 @@ class Message extends DataClass implements Insertable<Message> {
   final String? fileUrl;
   final bool isRead;
   final DateTime timestamp;
+  final String? messageType;
+  final String? messageId;
+  final String? completionStatus;
+  final String? votesByOption;
+  final String? userVotes;
   const Message(
       {required this.id,
       required this.serverMessageId,
@@ -971,7 +1047,12 @@ class Message extends DataClass implements Insertable<Message> {
       required this.textContent,
       this.fileUrl,
       required this.isRead,
-      required this.timestamp});
+      required this.timestamp,
+      this.messageType,
+      this.messageId,
+      this.completionStatus,
+      this.votesByOption,
+      this.userVotes});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -985,6 +1066,21 @@ class Message extends DataClass implements Insertable<Message> {
     }
     map['is_read'] = Variable<bool>(isRead);
     map['timestamp'] = Variable<DateTime>(timestamp);
+    if (!nullToAbsent || messageType != null) {
+      map['message_type'] = Variable<String>(messageType);
+    }
+    if (!nullToAbsent || messageId != null) {
+      map['message_id'] = Variable<String>(messageId);
+    }
+    if (!nullToAbsent || completionStatus != null) {
+      map['completion_status'] = Variable<String>(completionStatus);
+    }
+    if (!nullToAbsent || votesByOption != null) {
+      map['votes_by_option'] = Variable<String>(votesByOption);
+    }
+    if (!nullToAbsent || userVotes != null) {
+      map['user_votes'] = Variable<String>(userVotes);
+    }
     return map;
   }
 
@@ -1000,6 +1096,21 @@ class Message extends DataClass implements Insertable<Message> {
           : Value(fileUrl),
       isRead: Value(isRead),
       timestamp: Value(timestamp),
+      messageType: messageType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(messageType),
+      messageId: messageId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(messageId),
+      completionStatus: completionStatus == null && nullToAbsent
+          ? const Value.absent()
+          : Value(completionStatus),
+      votesByOption: votesByOption == null && nullToAbsent
+          ? const Value.absent()
+          : Value(votesByOption),
+      userVotes: userVotes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(userVotes),
     );
   }
 
@@ -1015,6 +1126,11 @@ class Message extends DataClass implements Insertable<Message> {
       fileUrl: serializer.fromJson<String?>(json['fileUrl']),
       isRead: serializer.fromJson<bool>(json['isRead']),
       timestamp: serializer.fromJson<DateTime>(json['timestamp']),
+      messageType: serializer.fromJson<String?>(json['messageType']),
+      messageId: serializer.fromJson<String?>(json['messageId']),
+      completionStatus: serializer.fromJson<String?>(json['completionStatus']),
+      votesByOption: serializer.fromJson<String?>(json['votesByOption']),
+      userVotes: serializer.fromJson<String?>(json['userVotes']),
     );
   }
   @override
@@ -1029,6 +1145,11 @@ class Message extends DataClass implements Insertable<Message> {
       'fileUrl': serializer.toJson<String?>(fileUrl),
       'isRead': serializer.toJson<bool>(isRead),
       'timestamp': serializer.toJson<DateTime>(timestamp),
+      'messageType': serializer.toJson<String?>(messageType),
+      'messageId': serializer.toJson<String?>(messageId),
+      'completionStatus': serializer.toJson<String?>(completionStatus),
+      'votesByOption': serializer.toJson<String?>(votesByOption),
+      'userVotes': serializer.toJson<String?>(userVotes),
     };
   }
 
@@ -1040,7 +1161,12 @@ class Message extends DataClass implements Insertable<Message> {
           String? textContent,
           Value<String?> fileUrl = const Value.absent(),
           bool? isRead,
-          DateTime? timestamp}) =>
+          DateTime? timestamp,
+          Value<String?> messageType = const Value.absent(),
+          Value<String?> messageId = const Value.absent(),
+          Value<String?> completionStatus = const Value.absent(),
+          Value<String?> votesByOption = const Value.absent(),
+          Value<String?> userVotes = const Value.absent()}) =>
       Message(
         id: id ?? this.id,
         serverMessageId: serverMessageId ?? this.serverMessageId,
@@ -1050,6 +1176,14 @@ class Message extends DataClass implements Insertable<Message> {
         fileUrl: fileUrl.present ? fileUrl.value : this.fileUrl,
         isRead: isRead ?? this.isRead,
         timestamp: timestamp ?? this.timestamp,
+        messageType: messageType.present ? messageType.value : this.messageType,
+        messageId: messageId.present ? messageId.value : this.messageId,
+        completionStatus: completionStatus.present
+            ? completionStatus.value
+            : this.completionStatus,
+        votesByOption:
+            votesByOption.present ? votesByOption.value : this.votesByOption,
+        userVotes: userVotes.present ? userVotes.value : this.userVotes,
       );
   Message copyWithCompanion(MessagesCompanion data) {
     return Message(
@@ -1064,6 +1198,16 @@ class Message extends DataClass implements Insertable<Message> {
       fileUrl: data.fileUrl.present ? data.fileUrl.value : this.fileUrl,
       isRead: data.isRead.present ? data.isRead.value : this.isRead,
       timestamp: data.timestamp.present ? data.timestamp.value : this.timestamp,
+      messageType:
+          data.messageType.present ? data.messageType.value : this.messageType,
+      messageId: data.messageId.present ? data.messageId.value : this.messageId,
+      completionStatus: data.completionStatus.present
+          ? data.completionStatus.value
+          : this.completionStatus,
+      votesByOption: data.votesByOption.present
+          ? data.votesByOption.value
+          : this.votesByOption,
+      userVotes: data.userVotes.present ? data.userVotes.value : this.userVotes,
     );
   }
 
@@ -1077,14 +1221,31 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('textContent: $textContent, ')
           ..write('fileUrl: $fileUrl, ')
           ..write('isRead: $isRead, ')
-          ..write('timestamp: $timestamp')
+          ..write('timestamp: $timestamp, ')
+          ..write('messageType: $messageType, ')
+          ..write('messageId: $messageId, ')
+          ..write('completionStatus: $completionStatus, ')
+          ..write('votesByOption: $votesByOption, ')
+          ..write('userVotes: $userVotes')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, serverMessageId, chatId, senderId,
-      textContent, fileUrl, isRead, timestamp);
+  int get hashCode => Object.hash(
+      id,
+      serverMessageId,
+      chatId,
+      senderId,
+      textContent,
+      fileUrl,
+      isRead,
+      timestamp,
+      messageType,
+      messageId,
+      completionStatus,
+      votesByOption,
+      userVotes);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1096,7 +1257,12 @@ class Message extends DataClass implements Insertable<Message> {
           other.textContent == this.textContent &&
           other.fileUrl == this.fileUrl &&
           other.isRead == this.isRead &&
-          other.timestamp == this.timestamp);
+          other.timestamp == this.timestamp &&
+          other.messageType == this.messageType &&
+          other.messageId == this.messageId &&
+          other.completionStatus == this.completionStatus &&
+          other.votesByOption == this.votesByOption &&
+          other.userVotes == this.userVotes);
 }
 
 class MessagesCompanion extends UpdateCompanion<Message> {
@@ -1108,6 +1274,11 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<String?> fileUrl;
   final Value<bool> isRead;
   final Value<DateTime> timestamp;
+  final Value<String?> messageType;
+  final Value<String?> messageId;
+  final Value<String?> completionStatus;
+  final Value<String?> votesByOption;
+  final Value<String?> userVotes;
   const MessagesCompanion({
     this.id = const Value.absent(),
     this.serverMessageId = const Value.absent(),
@@ -1117,6 +1288,11 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.fileUrl = const Value.absent(),
     this.isRead = const Value.absent(),
     this.timestamp = const Value.absent(),
+    this.messageType = const Value.absent(),
+    this.messageId = const Value.absent(),
+    this.completionStatus = const Value.absent(),
+    this.votesByOption = const Value.absent(),
+    this.userVotes = const Value.absent(),
   });
   MessagesCompanion.insert({
     this.id = const Value.absent(),
@@ -1127,6 +1303,11 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.fileUrl = const Value.absent(),
     this.isRead = const Value.absent(),
     required DateTime timestamp,
+    this.messageType = const Value.absent(),
+    this.messageId = const Value.absent(),
+    this.completionStatus = const Value.absent(),
+    this.votesByOption = const Value.absent(),
+    this.userVotes = const Value.absent(),
   })  : serverMessageId = Value(serverMessageId),
         chatId = Value(chatId),
         senderId = Value(senderId),
@@ -1141,6 +1322,11 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<String>? fileUrl,
     Expression<bool>? isRead,
     Expression<DateTime>? timestamp,
+    Expression<String>? messageType,
+    Expression<String>? messageId,
+    Expression<String>? completionStatus,
+    Expression<String>? votesByOption,
+    Expression<String>? userVotes,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -1151,6 +1337,11 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (fileUrl != null) 'file_url': fileUrl,
       if (isRead != null) 'is_read': isRead,
       if (timestamp != null) 'timestamp': timestamp,
+      if (messageType != null) 'message_type': messageType,
+      if (messageId != null) 'message_id': messageId,
+      if (completionStatus != null) 'completion_status': completionStatus,
+      if (votesByOption != null) 'votes_by_option': votesByOption,
+      if (userVotes != null) 'user_votes': userVotes,
     });
   }
 
@@ -1162,7 +1353,12 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       Value<String>? textContent,
       Value<String?>? fileUrl,
       Value<bool>? isRead,
-      Value<DateTime>? timestamp}) {
+      Value<DateTime>? timestamp,
+      Value<String?>? messageType,
+      Value<String?>? messageId,
+      Value<String?>? completionStatus,
+      Value<String?>? votesByOption,
+      Value<String?>? userVotes}) {
     return MessagesCompanion(
       id: id ?? this.id,
       serverMessageId: serverMessageId ?? this.serverMessageId,
@@ -1172,6 +1368,11 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       fileUrl: fileUrl ?? this.fileUrl,
       isRead: isRead ?? this.isRead,
       timestamp: timestamp ?? this.timestamp,
+      messageType: messageType ?? this.messageType,
+      messageId: messageId ?? this.messageId,
+      completionStatus: completionStatus ?? this.completionStatus,
+      votesByOption: votesByOption ?? this.votesByOption,
+      userVotes: userVotes ?? this.userVotes,
     );
   }
 
@@ -1202,6 +1403,21 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     if (timestamp.present) {
       map['timestamp'] = Variable<DateTime>(timestamp.value);
     }
+    if (messageType.present) {
+      map['message_type'] = Variable<String>(messageType.value);
+    }
+    if (messageId.present) {
+      map['message_id'] = Variable<String>(messageId.value);
+    }
+    if (completionStatus.present) {
+      map['completion_status'] = Variable<String>(completionStatus.value);
+    }
+    if (votesByOption.present) {
+      map['votes_by_option'] = Variable<String>(votesByOption.value);
+    }
+    if (userVotes.present) {
+      map['user_votes'] = Variable<String>(userVotes.value);
+    }
     return map;
   }
 
@@ -1215,7 +1431,12 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('textContent: $textContent, ')
           ..write('fileUrl: $fileUrl, ')
           ..write('isRead: $isRead, ')
-          ..write('timestamp: $timestamp')
+          ..write('timestamp: $timestamp, ')
+          ..write('messageType: $messageType, ')
+          ..write('messageId: $messageId, ')
+          ..write('completionStatus: $completionStatus, ')
+          ..write('votesByOption: $votesByOption, ')
+          ..write('userVotes: $userVotes')
           ..write(')'))
         .toString();
   }
@@ -1654,6 +1875,11 @@ typedef $$MessagesTableCreateCompanionBuilder = MessagesCompanion Function({
   Value<String?> fileUrl,
   Value<bool> isRead,
   required DateTime timestamp,
+  Value<String?> messageType,
+  Value<String?> messageId,
+  Value<String?> completionStatus,
+  Value<String?> votesByOption,
+  Value<String?> userVotes,
 });
 typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<int> id,
@@ -1664,6 +1890,11 @@ typedef $$MessagesTableUpdateCompanionBuilder = MessagesCompanion Function({
   Value<String?> fileUrl,
   Value<bool> isRead,
   Value<DateTime> timestamp,
+  Value<String?> messageType,
+  Value<String?> messageId,
+  Value<String?> completionStatus,
+  Value<String?> votesByOption,
+  Value<String?> userVotes,
 });
 
 final class $$MessagesTableReferences
@@ -1715,6 +1946,22 @@ class $$MessagesTableFilterComposer
 
   ColumnFilters<DateTime> get timestamp => $composableBuilder(
       column: $table.timestamp, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get messageType => $composableBuilder(
+      column: $table.messageType, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get messageId => $composableBuilder(
+      column: $table.messageId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get completionStatus => $composableBuilder(
+      column: $table.completionStatus,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get votesByOption => $composableBuilder(
+      column: $table.votesByOption, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get userVotes => $composableBuilder(
+      column: $table.userVotes, builder: (column) => ColumnFilters(column));
 
   $$ChatsTableFilterComposer get chatId {
     final $$ChatsTableFilterComposer composer = $composerBuilder(
@@ -1768,6 +2015,23 @@ class $$MessagesTableOrderingComposer
   ColumnOrderings<DateTime> get timestamp => $composableBuilder(
       column: $table.timestamp, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get messageType => $composableBuilder(
+      column: $table.messageType, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get messageId => $composableBuilder(
+      column: $table.messageId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get completionStatus => $composableBuilder(
+      column: $table.completionStatus,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get votesByOption => $composableBuilder(
+      column: $table.votesByOption,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get userVotes => $composableBuilder(
+      column: $table.userVotes, builder: (column) => ColumnOrderings(column));
+
   $$ChatsTableOrderingComposer get chatId {
     final $$ChatsTableOrderingComposer composer = $composerBuilder(
         composer: this,
@@ -1818,6 +2082,21 @@ class $$MessagesTableAnnotationComposer
 
   GeneratedColumn<DateTime> get timestamp =>
       $composableBuilder(column: $table.timestamp, builder: (column) => column);
+
+  GeneratedColumn<String> get messageType => $composableBuilder(
+      column: $table.messageType, builder: (column) => column);
+
+  GeneratedColumn<String> get messageId =>
+      $composableBuilder(column: $table.messageId, builder: (column) => column);
+
+  GeneratedColumn<String> get completionStatus => $composableBuilder(
+      column: $table.completionStatus, builder: (column) => column);
+
+  GeneratedColumn<String> get votesByOption => $composableBuilder(
+      column: $table.votesByOption, builder: (column) => column);
+
+  GeneratedColumn<String> get userVotes =>
+      $composableBuilder(column: $table.userVotes, builder: (column) => column);
 
   $$ChatsTableAnnotationComposer get chatId {
     final $$ChatsTableAnnotationComposer composer = $composerBuilder(
@@ -1871,6 +2150,11 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<String?> fileUrl = const Value.absent(),
             Value<bool> isRead = const Value.absent(),
             Value<DateTime> timestamp = const Value.absent(),
+            Value<String?> messageType = const Value.absent(),
+            Value<String?> messageId = const Value.absent(),
+            Value<String?> completionStatus = const Value.absent(),
+            Value<String?> votesByOption = const Value.absent(),
+            Value<String?> userVotes = const Value.absent(),
           }) =>
               MessagesCompanion(
             id: id,
@@ -1881,6 +2165,11 @@ class $$MessagesTableTableManager extends RootTableManager<
             fileUrl: fileUrl,
             isRead: isRead,
             timestamp: timestamp,
+            messageType: messageType,
+            messageId: messageId,
+            completionStatus: completionStatus,
+            votesByOption: votesByOption,
+            userVotes: userVotes,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -1891,6 +2180,11 @@ class $$MessagesTableTableManager extends RootTableManager<
             Value<String?> fileUrl = const Value.absent(),
             Value<bool> isRead = const Value.absent(),
             required DateTime timestamp,
+            Value<String?> messageType = const Value.absent(),
+            Value<String?> messageId = const Value.absent(),
+            Value<String?> completionStatus = const Value.absent(),
+            Value<String?> votesByOption = const Value.absent(),
+            Value<String?> userVotes = const Value.absent(),
           }) =>
               MessagesCompanion.insert(
             id: id,
@@ -1901,6 +2195,11 @@ class $$MessagesTableTableManager extends RootTableManager<
             fileUrl: fileUrl,
             isRead: isRead,
             timestamp: timestamp,
+            messageType: messageType,
+            messageId: messageId,
+            completionStatus: completionStatus,
+            votesByOption: votesByOption,
+            userVotes: userVotes,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) =>

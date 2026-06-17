@@ -15,6 +15,7 @@ import '../../styles/app_styles.dart';
 import '../../widgets/common/avatar_widget.dart';
 import 'chat_screen.dart';
 import 'archived_chats_screen.dart';
+import '../../widgets/common/premium_page_route.dart';
 
 class ChatListScreen extends StatefulWidget {
   const ChatListScreen({super.key});
@@ -24,7 +25,7 @@ class ChatListScreen extends StatefulWidget {
 }
 
 class _ChatListScreenState extends State<ChatListScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, AutomaticKeepAliveClientMixin {
   late final ChatService _chatService;
   late final LocalChatRepository _localChatRepo;
   bool _isLoadingSync = true;
@@ -47,6 +48,9 @@ class _ChatListScreenState extends State<ChatListScreen>
   bool _isArchiveRowVisible = false;
   double _pullDistance = 0.0;
   final Set<String> _animatedChatIds = {};
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -412,6 +416,7 @@ class _ChatListScreenState extends State<ChatListScreen>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return StreamBuilder<List<ChatModel>>(
       stream: _localChatRepo.watchArchivedChats(),
       builder: (context, archivedSnapshot) {
@@ -823,8 +828,9 @@ class _ChatListScreenState extends State<ChatListScreen>
       child: InkWell(
         onTap: () {
           Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => const ArchivedChatsScreen(),
+            PremiumPageRoute(
+              page: const ArchivedChatsScreen(),
+              transitionType: PremiumTransitionType.archivedReveal,
             ),
           );
         },
@@ -832,7 +838,8 @@ class _ChatListScreenState extends State<ChatListScreen>
         highlightColor: Colors.white.withOpacity(0.01),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Row(
+          child: IgnorePointer(
+            child: Row(
             children: [
               // Аватар архива с градиентом и иконкой
               AvatarWidget(
@@ -905,6 +912,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                 ),
             ],
           ),
+          ), // Close IgnorePointer
         ),
       ),
     );
@@ -1066,6 +1074,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                   isArchiveVisible: _isArchiveRowVisible,
                   parent: const AlwaysScrollableScrollPhysics(),
                 ),
+                itemExtent: 79.0, // Fixed height for O(1) layout
                 padding: EdgeInsets.only(
                   top: topOffset,
                   bottom: 100, // Отступ под нижнюю панель навигации
@@ -1178,8 +1187,9 @@ class _ChatListScreenState extends State<ChatListScreen>
       child: InkWell(
         onTap: () {
           Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => ChatScreen(chat: chat),
+            PremiumPageRoute(
+              page: ChatScreen(chat: chat),
+              transitionType: PremiumTransitionType.chatReveal,
             ),
           );
         },
@@ -1187,7 +1197,8 @@ class _ChatListScreenState extends State<ChatListScreen>
         highlightColor: Colors.white.withOpacity(0.01),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Row(
+          child: IgnorePointer(
+            child: Row(
             children: [
               // Аватар со статусом присутствия
               _buildAvatarWithPresence(chat),
@@ -1297,6 +1308,7 @@ class _ChatListScreenState extends State<ChatListScreen>
               ),
             ],
           ),
+          ), // Close IgnorePointer
         ),
       ),
     );
