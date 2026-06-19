@@ -32,6 +32,8 @@ import 'package:chewie/chewie.dart';
 import '../../utils/local_proxy.dart';
 import 'package:record/record.dart';
 import 'widgets/todo_poll_widgets.dart';
+import '../../widgets/common/create_poll_todo_modals.dart';
+import '../../providers/playback_provider.dart';
 
 class ChatScreen extends StatefulWidget {
   final ChatModel chat;
@@ -822,7 +824,35 @@ class _ChatScreenState extends State<ChatScreen> {
     final repo = context.read<LocalChatRepository>();
     final dbMsg = await repo.getMessageByMessageId(messageId);
     if (dbMsg != null) {
-      // 1. Update votesByOption
+      // 1. Update userVotes (if this vote belongs to the current user)
+      final currentUser = context.read<AuthProvider>().user;
+      final isCurrentUser = (currentUser != null &&
+          (userId == currentUser.id.toString() || username == currentUser.username));
+
+      List<String> userVotes = [];
+      if (dbMsg.userVotes != null && dbMsg.userVotes!.isNotEmpty) {
+        try {
+          userVotes = List<String>.from(jsonDecode(dbMsg.userVotes!));
+        } catch (_) {}
+      }
+
+      if (isCurrentUser) {
+        if (removeVote) {
+          if (!userVotes.contains(optionId)) {
+            // Vote already removed locally, skip duplicate increment/decrement
+            return;
+          }
+          userVotes.remove(optionId);
+        } else {
+          if (userVotes.contains(optionId)) {
+            // Vote already added locally, skip duplicate increment/decrement
+            return;
+          }
+          userVotes.add(optionId);
+        }
+      }
+
+      // 2. Update votesByOption
       Map<String, dynamic> votesByOption = {};
       if (dbMsg.votesByOption != null && dbMsg.votesByOption!.isNotEmpty) {
         try {
@@ -838,28 +868,6 @@ class _ChatScreenState extends State<ChatScreen> {
         votesByOption[optionId] = (currentOptionCount - 1).clamp(0, 999999);
       } else {
         votesByOption[optionId] = currentOptionCount + 1;
-      }
-
-      // 2. Update userVotes (if this vote belongs to the current user)
-      final currentUser = context.read<AuthProvider>().user;
-      final isCurrentUser = (currentUser != null &&
-          (userId == currentUser.id.toString() || username == currentUser.username));
-
-      List<String> userVotes = [];
-      if (dbMsg.userVotes != null && dbMsg.userVotes!.isNotEmpty) {
-        try {
-          userVotes = List<String>.from(jsonDecode(dbMsg.userVotes!));
-        } catch (_) {}
-      }
-
-      if (isCurrentUser) {
-        if (removeVote) {
-          userVotes.remove(optionId);
-        } else {
-          if (!userVotes.contains(optionId)) {
-            userVotes.add(optionId);
-          }
-        }
       }
 
       await repo.updateMessageCompanion(
@@ -932,6 +940,147 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       debugPrint('Error sending E2EE message over WS: $e');
     }
+  }
+
+  Future<void> _sendPollMessage(String question, List<String> options, bool isMultipleChoice) async {
+    final cryptoService = context.read<CryptoService>();
+    final List<Map<String, String>> optionsList = options
+        .asMap()
+        .entries
+        .map((e) => {'id': 'opt_${e.key}', 'text': e.value})
+        .toList();
+
+    final payload = jsonEncode({
+      'type': 'poll',
+      'question': question,
+      'options': optionsList,
+      'is_multiple_choice': isMultipleChoice,
+      'is_native': true,
+    });
+
+    try {
+      final encryptedText = await cryptoService.encryptMessage(payload, widget.chat.id);
+      final encryptedQuestion = await cryptoService.encryptMessage(question, widget.chat.id);
+
+      if (encryptedText != null && encryptedQuestion != null) {
+        await _chatWebSocketService.send({
+          'type': 'poll_message',
+          'encrypted_content': encryptedText,
+          'encrypted_question': encryptedQuestion,
+          'question': question,
+          'chat_id': widget.chat.id,
+        });
+      }
+    } catch (e) {
+      debugPrint('Error sending poll over WS: $e');
+    }
+  }
+
+  Future<void> _sendTodoListMessage(String title, List<String> items) async {
+    final cryptoService = context.read<CryptoService>();
+    final List<Map<String, dynamic>> itemsList = items.map((item) => {
+      'text': item,
+      'completed': false,
+    }).toList();
+
+    final payload = jsonEncode({
+      'type': 'todo_list',
+      'title': title,
+      'items': itemsList,
+      'is_native': true,
+    });
+
+    try {
+      final encryptedText = await cryptoService.encryptMessage(payload, widget.chat.id);
+      final encryptedTitle = await cryptoService.encryptMessage(title, widget.chat.id);
+
+      if (encryptedText != null && encryptedTitle != null) {
+        await _chatWebSocketService.send({
+          'type': 'todo_list_message',
+          'encrypted_content': encryptedText,
+          'encrypted_title': encryptedTitle,
+          'title': title,
+          'chat_id': widget.chat.id,
+        });
+      }
+    } catch (e) {
+      debugPrint('Error sending todo list over WS: $e');
+    }
+  }
+
+  void _showAttachmentMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black54,
+      builder: (context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF141416),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withOpacity(0.08),
+                width: 1.5,
+              ),
+            ),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 12),
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.poll_rounded, color: Colors.white),
+                  ),
+                  title: const Text('Создать опрос', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  subtitle: Text('Проведение голосования в чате', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    CreatePollModal.show(context, _sendPollMessage);
+                  },
+                ),
+                Divider(color: Colors.white.withOpacity(0.04), height: 1),
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.05),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.check_box_rounded, color: Colors.white),
+                  ),
+                  title: const Text('Создать To-Do список', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  subtitle: Text('Список задач с отметками выполнения', style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    CreateTodoModal.show(context, _sendTodoListMessage);
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _startRecording() async {
@@ -1202,8 +1351,142 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ],
             ),
+
+            // Mini Media Player
+            _buildMiniPlayer(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildMiniPlayer() {
+    final topOffset = MediaQuery.of(context).padding.top + 64; // Under the AppBar
+    // Positioned всегда в дереве (он в Stack). Анимация появления/исчезновения
+    // делается внутри через AnimatedSwitcher: slide-down + fade на появление,
+    // slide-up + fade на исчезновение.
+    return Positioned(
+      top: topOffset,
+      left: 16,
+      right: 16,
+      child: Consumer<PlaybackProvider>(
+        builder: (context, playbackProvider, child) {
+          final isVisible = playbackProvider.currentAudioUrl != null;
+          final isPlaying = playbackProvider.isPlaying;
+          final title = playbackProvider.title;
+          final subtitle = playbackProvider.subtitle;
+
+          return AnimatedSwitcher(
+            duration: const Duration(milliseconds: 280),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (widget, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, -0.6),
+                    end: Offset.zero,
+                  ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+                  child: widget,
+                ),
+              );
+            },
+            child: isVisible
+                ? Container(
+                    key: const ValueKey('mini_player_visible'),
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: const Color(0xE6141416), // frosted look
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.08),
+                        width: 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 12),
+                        // Play/Pause
+                        GestureDetector(
+                          onTap: () {
+                            if (isPlaying) {
+                              playbackProvider.pause();
+                            } else {
+                              playbackProvider.resume();
+                            }
+                          },
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                              color: Colors.black,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // Title and subtitle
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: AppStyles.fontFamily,
+                                ),
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                subtitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.5),
+                                  fontSize: 10,
+                                  fontFamily: AppStyles.fontFamily,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Close button
+                        GestureDetector(
+                          onTap: () => playbackProvider.stop(),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            child: Icon(
+                              Icons.close_rounded,
+                              color: Colors.white.withOpacity(0.4),
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(key: ValueKey('mini_player_hidden')),
+          );
+        },
       ),
     );
   }
@@ -1972,9 +2255,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     color: Colors.transparent,
                     child: InkWell(
                       borderRadius: BorderRadius.circular(22),
-                      onTap: () {
-                        // TODO: Add attachment action
-                      },
+                      onTap: _showAttachmentMenu,
                       child: Padding(
                         padding: const EdgeInsets.all(8.0),
                         child: FaIcon(
@@ -3361,8 +3642,16 @@ class MessageBubble extends StatelessWidget {
             fileData = Map<String, dynamic>.from(parsed);
             displayContent = ''; // Чистое файловое сообщение без текстовой подписи
           } else if (pType == 'todo_list' || pType == 'poll') {
-            fileData = Map<String, dynamic>.from(parsed);
-            displayContent = '';
+            final isTodo = pType == 'todo_list';
+            final isPoll = pType == 'poll';
+            final isNative = parsed['is_native'] == true;
+            final isTodoType = message.messageType == 'todo_list';
+            final isPollType = message.messageType == 'poll';
+
+            if ((isTodo && (isTodoType || isNative)) || (isPoll && (isPollType || isNative))) {
+              fileData = Map<String, dynamic>.from(parsed);
+              displayContent = '';
+            }
           }
         }
       } catch (_) {}
@@ -3989,107 +4278,39 @@ class VoiceMessagePlayer extends StatefulWidget {
   State<VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
 }
 
-class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
-  VideoPlayerController? _controller;
-  bool _isInitialized = false;
-  bool _isPlaying = false;
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
-  bool _hasError = false;
+class _VoiceMessagePlayerState extends State<VoiceMessagePlayer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
 
   @override
   void initState() {
     super.initState();
-    _duration = Duration(seconds: widget.duration);
-    _initializeController();
-  }
-
-  Future<void> _initializeController() async {
-    try {
-      final tempDir = await getTemporaryDirectory();
-      
-      // Determine file extension
-      String ext = '.m4a'; // default
-      if (widget.mimeType != null) {
-        final mime = widget.mimeType!.toLowerCase();
-        if (mime.contains('webm')) {
-          ext = '.webm';
-        } else if (mime.contains('ogg') || mime.contains('opus')) {
-          ext = '.ogg';
-        } else if (mime.contains('mp3')) {
-          ext = '.mp3';
-        } else if (mime.contains('wav')) {
-          ext = '.wav';
-        } else if (mime.contains('aac')) {
-          ext = '.aac';
-        }
-      }
-
-      // Generate a unique, safe filename based on the URL hash or sanitized string
-      final safeName = widget.audioUrl.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
-      final localFilePath = '${tempDir.path}/voice_$safeName$ext';
-      final file = File(localFilePath);
-
-      // Download file if it does not exist locally
-      if (!await file.exists()) {
-        final freshToken = await TokenStorage().getAccessToken();
-        final dio = Dio();
-        // Configure SSL bypass for local development/self-signed certs
-        (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
-          final client = HttpClient();
-          client.badCertificateCallback = (X509Certificate cert, String host, int port) => true;
-          return client;
-        };
-
-        final response = await dio.download(
-          widget.audioUrl,
-          localFilePath,
-          options: Options(
-            headers: freshToken != null && freshToken.isNotEmpty
-                ? {'Authorization': 'Bearer $freshToken'}
-                : {},
-          ),
-        );
-        if (response.statusCode != 200) {
-          throw Exception('Failed to download audio file: ${response.statusCode}');
-        }
-      }
-
-      _controller = VideoPlayerController.file(file);
-      await _controller!.initialize();
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-          _duration = _controller!.value.duration;
-        });
-        _controller!.addListener(_onControllerUpdate);
-      }
-    } catch (e) {
-      debugPrint('Voice playback init error: $e');
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-        });
-      }
-    }
-  }
-
-  void _onControllerUpdate() {
-    if (_controller == null || !mounted) return;
-    final value = _controller!.value;
-    setState(() {
-      _isPlaying = value.isPlaying;
-      _position = value.position;
-      if (value.position >= value.duration && _isPlaying) {
-        _isPlaying = false;
-      }
-    });
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    );
+    // Лёгкий overshot 1.0 → эффект «выскакивания» плашки.
+    _scale = Tween<double>(begin: 0.6, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        // Превышает 1.0 и возвращается — даёт bounce на месте.
+        curve: Curves.easeOutBack,
+      ),
+    );
+    _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
+      ),
+    );
+    _controller.forward();
   }
 
   @override
   void dispose() {
-    _controller?.removeListener(_onControllerUpdate);
-    _controller?.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
@@ -4099,141 +4320,142 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     return '$m:${s.toString().padLeft(2, '0')}';
   }
 
-  void _togglePlay() {
-    if (_controller == null || !_isInitialized) return;
-    if (_isPlaying) {
-      _controller!.pause();
-    } else {
-      if (_controller!.value.position >= _controller!.value.duration) {
-        _controller!.seekTo(Duration.zero);
-      }
-      _controller!.play();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (_hasError) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline, color: Colors.white.withValues(alpha: 0.5), size: 18),
-            const SizedBox(width: 8),
-            Text(
-              'Ошибка воспроизведения',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.5),
-                fontSize: 12,
-                fontFamily: AppStyles.fontFamily,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final playBtnColor = widget.isMe ? const Color(0xFF4ADE80) : Colors.white;
+    final isMe = widget.isMe;
+    final playBtnColor = isMe ? const Color(0xFF4ADE80) : Colors.white;
     final iconColor = Colors.black;
-    final activeTrackColor = widget.isMe ? const Color(0xFF4ADE80) : Colors.white;
+    final activeTrackColor = isMe ? const Color(0xFF4ADE80) : Colors.white;
     final inactiveTrackColor = Colors.white.withValues(alpha: 0.2);
 
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 240),
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // Play/Pause circular button (Telegram-like minimalist design)
-          GestureDetector(
-            onTap: _isInitialized ? _togglePlay : null,
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: playBtnColor,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: playBtnColor.withValues(alpha: 0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Center(
-                child: !_isInitialized
-                    ? SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(iconColor.withValues(alpha: 0.5)),
-                        ),
-                      )
-                    : Icon(
-                        _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                        color: iconColor,
-                        size: 26,
-                      ),
-              ),
-            ),
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _opacity.value,
+          child: Transform.scale(
+            scale: _scale.value,
+            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+            child: child,
           ),
-          const SizedBox(width: 14),
-          // Progress & Duration column
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        );
+      },
+      child: Consumer<PlaybackProvider>(
+        builder: (context, playbackProvider, child) {
+          final audioUrl = widget.audioUrl;
+          final isCurrent = playbackProvider.currentAudioUrl == audioUrl;
+          final isPlaying = isCurrent && playbackProvider.isPlaying;
+          final isInitialized = isCurrent && playbackProvider.isInitialized;
+          final isLoading = isCurrent && playbackProvider.isLoading;
+
+          final position = isCurrent ? playbackProvider.position : Duration.zero;
+          final durationVal = isCurrent && playbackProvider.isInitialized ? playbackProvider.duration : Duration(seconds: widget.duration);
+
+          final displayDuration = isPlaying || (isCurrent && position > Duration.zero) ? position : durationVal;
+
+          return Container(
+            constraints: const BoxConstraints(maxWidth: 240),
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+            child: Row(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Minimalistic Slider
-                SizedBox(
-                  height: 16,
-                  child: SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 2.5,
-                      trackShape: _CustomTrackShape(),
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 4.5,
-                        elevation: 2,
-                      ),
-                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-                      activeTrackColor: activeTrackColor,
-                      inactiveTrackColor: inactiveTrackColor,
-                      thumbColor: activeTrackColor,
+                // Play/Pause circular button
+                GestureDetector(
+                  onTap: () {
+                    if (isLoading) return;
+                    playbackProvider.play(
+                      audioUrl,
+                      'Голосовое сообщение',
+                      isMe ? 'Вы' : 'Собеседник',
+                      mimeType: widget.mimeType,
+                    );
+                  },
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: playBtnColor,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: playBtnColor.withValues(alpha: 0.2),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
                     ),
-                    child: Slider(
-                      value: _position.inMilliseconds.toDouble(),
-                      min: 0.0,
-                      max: _duration.inMilliseconds.toDouble() > 0.0
-                          ? _duration.inMilliseconds.toDouble()
-                          : 1.0,
-                      onChanged: _isInitialized
-                          ? (val) {
-                              _controller?.seekTo(Duration(milliseconds: val.toInt()));
-                            }
-                          : null,
+                    child: Center(
+                      child: isLoading
+                          ? SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(iconColor.withValues(alpha: 0.5)),
+                              ),
+                            )
+                          : Icon(
+                              isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                              color: iconColor,
+                              size: 26,
+                            ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 2),
-                // Time / Progress Text
-                Text(
-                  _isPlaying ? _formatDuration(_position) : _formatDuration(_duration),
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.5),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0.2,
-                    fontFamily: AppStyles.fontFamily,
+                const SizedBox(width: 14),
+                // Progress & Duration column
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Slider
+                      SizedBox(
+                        height: 16,
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 2.5,
+                            trackShape: _CustomTrackShape(),
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 4.5,
+                              elevation: 2,
+                            ),
+                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                            activeTrackColor: activeTrackColor,
+                            inactiveTrackColor: inactiveTrackColor,
+                            thumbColor: activeTrackColor,
+                          ),
+                          child: Slider(
+                            value: position.inMilliseconds.toDouble().clamp(0.0, durationVal.inMilliseconds.toDouble() > 0 ? durationVal.inMilliseconds.toDouble() : 1.0),
+                            max: durationVal.inMilliseconds.toDouble() > 0 ? durationVal.inMilliseconds.toDouble() : 1.0,
+                            onChanged: isCurrent && isInitialized
+                                ? (val) {
+                                    playbackProvider.seek(Duration(milliseconds: val.toInt()));
+                                  }
+                                : null,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: Text(
+                          _formatDuration(displayDuration),
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.5),
+                            fontSize: 10.5,
+                            fontFamily: AppStyles.fontFamily,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

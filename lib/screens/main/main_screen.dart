@@ -4,6 +4,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../../models/auth/user_model.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/playback_provider.dart';
 import '../../styles/app_styles.dart';
 import '../../widgets/common/liquid_glass_nav_bar.dart';
 import '../auth/login_screen.dart';
@@ -53,6 +54,12 @@ class _MainScreenState extends State<MainScreen> {
             ],
           ),
           Positioned(
+            left: 16,
+            right: 16,
+            bottom: 84, // Above the navigation bar
+            child: _buildWideMediaBar(),
+          ),
+          Positioned(
             left: 0,
             right: 0,
             bottom: 0,
@@ -74,6 +81,35 @@ class _MainScreenState extends State<MainScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildWideMediaBar() {
+    return Consumer<PlaybackProvider>(
+      builder: (context, playbackProvider, child) {
+        final isVisible = playbackProvider.currentAudioUrl != null;
+
+        // AnimatedSwitcher хранит предыдущий виджет во время исчезновения,
+        // поэтому содержимое (title/subtitle) не «прыгает» в пустоту при stop().
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 280),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (widget, animation) {
+            return SizeTransition(
+              sizeFactor: animation,
+              axisAlignment: -1.0,
+              child: FadeTransition(opacity: animation, child: widget),
+            );
+          },
+          // Уникальный ключ заставляет AnimatedSwitcher переключаться,
+          // когда плеер появляется/исчезает. Пока виден — один и тот же ключ,
+          // и контент обновляется на месте без пересоздания.
+          child: isVisible
+              ? _MediaBarContent(key: const ValueKey('media_bar_visible'))
+              : const SizedBox.shrink(key: ValueKey('media_bar_hidden')),
+        );
+      },
     );
   }
 
@@ -436,6 +472,143 @@ class _MainScreenState extends State<MainScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Содержимое плавающего медиа-бара. Вынесено в отдельный виджет, чтобы
+/// AnimatedSwitcher сохранял его целиком (со всеми последними значениями)
+/// во время анимации исчезновения.
+class _MediaBarContent extends StatelessWidget {
+  const _MediaBarContent({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final playbackProvider = context.watch<PlaybackProvider>();
+    final isPlaying = playbackProvider.isPlaying;
+    final title = playbackProvider.title;
+    final subtitle = playbackProvider.subtitle;
+
+    return Container(
+      height: 60,
+      decoration: BoxDecoration(
+        color: const Color(0xE6141416), // frosted look
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.08),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.5),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 16),
+          // Spinning music disc/icon
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Colors.white.withOpacity(0.1),
+                width: 1,
+              ),
+            ),
+            child: Center(
+              child: Icon(
+                Icons.music_note_rounded,
+                color: isPlaying ? const Color(0xFF4ADE80) : Colors.white70,
+                size: 16,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Title and subtitle
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: AppStyles.fontFamily,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 11,
+                    fontFamily: AppStyles.fontFamily,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Controls
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.skip_previous_rounded, color: Colors.white, size: 22),
+                onPressed: () => playbackProvider.previous(),
+              ),
+              GestureDetector(
+                onTap: () {
+                  if (isPlaying) {
+                    playbackProvider.pause();
+                  } else {
+                    playbackProvider.resume();
+                  }
+                },
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    color: Colors.black,
+                    size: 20,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.skip_next_rounded, color: Colors.white, size: 22),
+                onPressed: () => playbackProvider.next(),
+              ),
+              Container(
+                width: 1,
+                height: 24,
+                color: Colors.white.withOpacity(0.08),
+              ),
+              IconButton(
+                icon: Icon(Icons.close_rounded, color: Colors.white.withOpacity(0.4), size: 20),
+                onPressed: () => playbackProvider.stop(),
+              ),
+              const SizedBox(width: 4),
+            ],
+          ),
+        ],
       ),
     );
   }

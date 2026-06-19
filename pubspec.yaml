@@ -54,6 +54,9 @@ dependencies:
   # Audio recording
   record: ^7.1.0
 
+  # Audio playback (voice messages)
+  just_audio: ^0.9.39
+
   # Biometric (optional - for future)
   local_auth: ^2.1.8
   font_awesome_flutter: ^11.0.0

@@ -282,11 +282,13 @@ class PollWidget extends StatelessWidget {
                       Positioned.fill(
                         child: Align(
                           alignment: Alignment.centerLeft,
-                          child: FractionallySizedBox(
+                          child: AnimatedFractionallySizedBox(
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeOutCubic,
                             widthFactor: percent,
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 300),
-                              curve: Curves.easeOut,
+                              curve: Curves.easeOutCubic,
                               color: Colors.white.withValues(
                                 alpha: isSelected ? 0.16 : 0.06,
                               ),
@@ -295,7 +297,9 @@ class PollWidget extends StatelessWidget {
                         ),
                       ),
                       // Option content row
-                      Container(
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOutCubic,
                         padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 10),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
@@ -308,31 +312,43 @@ class PollWidget extends StatelessWidget {
                         ),
                         child: Row(
                           children: [
-                            // Selection state indicator (check or empty)
-                            if (isSelected) ...[
-                              const Icon(
-                                Icons.check,
-                                color: Colors.white,
-                                size: 14,
+                            // Selection state indicator (check or empty with AnimatedSize)
+                            AnimatedSize(
+                              duration: const Duration(milliseconds: 250),
+                              curve: Curves.easeOutCubic,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (isSelected) ...[
+                                    const Icon(
+                                      Icons.check_circle_rounded,
+                                      color: Colors.white,
+                                      size: 14,
+                                    ),
+                                    const SizedBox(width: 6),
+                                  ],
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                            ],
+                            ),
                             // Option text
                             Expanded(
-                              child: Text(
-                                optionText,
+                              child: AnimatedDefaultTextStyle(
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeOutCubic,
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 13.5,
                                   fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
                                   fontFamily: AppStyles.fontFamily,
                                 ),
+                                child: Text(optionText),
                               ),
                             ),
                             const SizedBox(width: 8),
                             // Percent text on the right
-                            Text(
-                              percentText,
+                            AnimatedDefaultTextStyle(
+                              duration: const Duration(milliseconds: 250),
+                              curve: Curves.easeOutCubic,
                               style: TextStyle(
                                 color: isSelected
                                     ? Colors.white
@@ -341,6 +357,7 @@ class PollWidget extends StatelessWidget {
                                 fontWeight: FontWeight.w500,
                                 fontFamily: AppStyles.fontFamily,
                               ),
+                              child: Text(percentText),
                             ),
                           ],
                         ),

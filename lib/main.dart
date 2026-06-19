@@ -5,6 +5,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'providers/auth_provider.dart';
+import 'providers/playback_provider.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/auth/onboarding_screen.dart';
@@ -78,6 +79,7 @@ class XaneoApp extends StatelessWidget {
 
     return MultiProvider(
       providers: [
+        ChangeNotifierProvider<PlaybackProvider>(create: (_) => PlaybackProvider()),
         // Локальная зашифрованная БД чатов
         Provider<LocalChatRepository>.value(value: localChatRepo),
         // ApiClient для всех экранов
