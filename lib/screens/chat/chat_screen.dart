@@ -34,6 +34,47 @@ import 'package:record/record.dart';
 import 'widgets/todo_poll_widgets.dart';
 import '../../widgets/common/create_poll_todo_modals.dart';
 import '../../providers/playback_provider.dart';
+import '../../widgets/voice_waveform_slider.dart';
+
+/// Immutable state class для оптимизации Selector
+class _VoicePlaybackState {
+  final String? currentAudioUrl;
+  final bool isPlaying;
+  final bool isInitialized;
+  final bool isLoading;
+  final Duration position;
+  final Duration duration;
+
+  const _VoicePlaybackState({
+    required this.currentAudioUrl,
+    required this.isPlaying,
+    required this.isInitialized,
+    required this.isLoading,
+    required this.position,
+    required this.duration,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _VoicePlaybackState &&
+          runtimeType == other.runtimeType &&
+          currentAudioUrl == other.currentAudioUrl &&
+          isPlaying == other.isPlaying &&
+          isInitialized == other.isInitialized &&
+          isLoading == other.isLoading &&
+          position == other.position &&
+          duration == other.duration;
+
+  @override
+  int get hashCode =>
+      currentAudioUrl.hashCode ^
+      isPlaying.hashCode ^
+      isInitialized.hashCode ^
+      isLoading.hashCode ^
+      position.hashCode ^
+      duration.hashCode;
+}
 
 class ChatScreen extends StatefulWidget {
   final ChatModel chat;
@@ -94,6 +135,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final Set<String> _animatedMessageIds = {};
   final Set<String> _messagesToAnimate = {};
   bool _isOwner = false;
+
+  // Оптимистичная отправка голосовых: temp-сообщение показывается сразу,
+  // затем сверяется с эхом сервера по file_id (чтобы не плодить дубли).
+  final Map<String, String> _pendingVoiceTempIds = {}; // file_id -> temp serverMessageId
+  final Map<String, String> _pendingVoiceLocalPaths = {}; // file_id -> локальный путь к записи
 
   Future<void> _loadJwtToken() async {
     final token = await TokenStorage().getAccessToken();
@@ -193,9 +239,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollListener() {
+    debugPrint('📜 ChatScreen: _scrollListener called');
+    debugPrint('  hasClients: ${_scrollController.hasClients}');
+    if (_scrollController.hasClients) {
+      debugPrint('  pixels: ${_scrollController.position.pixels}');
+      debugPrint('  maxScrollExtent: ${_scrollController.position.maxScrollExtent}');
+    }
+    
     // If we scroll close to the top (maxScrollExtent), load more history
     if (_scrollController.hasClients &&
         _scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      debugPrint('  ✅ Triggering _loadMoreMessages');
       _loadMoreMessages();
     }
   }
@@ -665,6 +719,11 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    if (type == 'voice_message') {
+      await _handleIncomingVoiceMessage(event);
+      return;
+    }
+
     if (type != 'encrypted_message' && type != 'poll_message' && type != 'todo_list_message') {
       if (type == 'todo_completion_update') {
         await _handleTodoCompletionUpdate(event);
@@ -782,6 +841,101 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       await _localChatRepo.saveChat(updatedChat);
     }
+  }
+
+  Future<void> _handleIncomingVoiceMessage(Map<String, dynamic> event) async {
+    final chatId = event['chat_id']?.toString();
+    if (chatId == null || chatId != widget.chat.id) return;
+
+    final localId = _localChatId;
+    if (localId == null) return;
+
+    final fileId = event['file_id']?.toString();
+    if (fileId == null) return;
+
+    final timestamp = _parseDateTime(event['created_at']) ?? DateTime.now();
+    final senderId = event['author_username']?.toString() ??
+        event['author_id']?.toString() ??
+        event['sender_id']?.toString() ??
+        'system';
+    final msgId = event['id']?.toString() ??
+        event['message_id']?.toString() ??
+        'ws_${timestamp.millisecondsSinceEpoch}';
+
+    final duration = event['duration'] is num
+        ? (event['duration'] as num).toInt()
+        : int.tryParse(event['duration']?.toString() ?? '') ?? 0;
+    final mimeType = event['mime_type']?.toString() ?? 'audio/wav';
+
+    // Сверка с оптимистичной отправкой: если это эхо нашего же ГС,
+    // схлопываем temp-сообщение в реальное (без дубля и без новой анимации),
+    // сохраняя local_path — чтобы наше сообщение проигрывалось из локального файла.
+    final String? tempId = _pendingVoiceTempIds.remove(fileId);
+    final String? localPath = _pendingVoiceLocalPaths.remove(fileId);
+    final bool isOwnEcho = tempId != null;
+
+    if (isOwnEcho) {
+      await _localChatRepo.deleteMessageByServerId(tempId);
+      _messagesToAnimate.remove(tempId);
+      _animatedMessageIds.add(msgId); // считаем уже "проявленным" — не анимируем заново
+    }
+
+    // Шаблон голосового: плеер сам подгрузит и расшифрует файл по file_id.
+    // Для своего сообщения добавляем local_path для мгновенного проигрывания.
+    final fileInfoJson = jsonEncode({
+      'type': 'voice',
+      'file_id': fileId,
+      'duration': duration,
+      'mime_type': mimeType,
+      if (localPath != null) 'local_path': localPath,
+    });
+
+    final bool isAlreadyKnown = isOwnEcho ||
+        _initialMessageIds.contains(msgId) ||
+        _animatedMessageIds.contains(msgId);
+
+    await _localChatRepo.saveMessage(
+      MessagesCompanion(
+        serverMessageId: Value(msgId),
+        chatId: Value(localId),
+        senderId: Value(senderId),
+        textContent: Value(fileInfoJson),
+        timestamp: Value(timestamp),
+        fileUrl: Value(fileInfoJson),
+        messageType: const Value('voice'),
+      ),
+    );
+
+    if (!isAlreadyKnown) {
+      _messagesToAnimate.add(msgId);
+    }
+    if (mounted) {
+      setState(() {
+        if (!isAlreadyKnown) _limit++;
+        _updateStream();
+      });
+    }
+
+    _chatService.markMessagesAsRead(widget.chat.id);
+
+    final updatedChat = ChatModel(
+      id: widget.chat.id,
+      name: widget.chat.name,
+      avatar: widget.chat.avatar,
+      avatarGradient: widget.chat.avatarGradient,
+      lastMessage: '🎤 Голосовое сообщение',
+      lastMessageTime: timestamp,
+      unreadCount: 0,
+      isGroup: widget.chat.isGroup,
+      isChannel: widget.chat.isChannel,
+      isPersonal: widget.chat.isPersonal,
+      isFavorites: widget.chat.isFavorites,
+      otherUser: _otherUser,
+      isEncrypted: false,
+      isArchived: widget.chat.isArchived,
+      archivedAt: widget.chat.archivedAt,
+    );
+    await _localChatRepo.saveChat(updatedChat);
   }
 
   Future<void> _handleTodoCompletionUpdate(Map<String, dynamic> event) async {
@@ -1096,7 +1250,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       final tempDir = await getTemporaryDirectory();
-      final path = '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      // Используем WAV (pcm16bits) для 100% гарантии точной перемотки (seek) на всех платформах.
+      // Сжимаем sampleRate для уменьшения размера файла (24kHz достаточно для голоса).
+      final path = '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
 
       // Haptic feedback
       try {
@@ -1105,9 +1261,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
       await _audioRecorder.start(
         const RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          sampleRate: 44100,
-          bitRate: 64000,
+          // AudioEncoder.wav = PCM16 С RIFF/WAVE заголовком.
+          // pcm16bits писал headerless raw PCM → ffmpeg на бэке не мог его распознать,
+          // а клиенты не могли декодировать. wav даёт валидный самодостаточный файл.
+          encoder: AudioEncoder.wav,
+          sampleRate: 24000,
+          bitRate: 48000,
         ),
         path: path,
       );
@@ -1205,20 +1364,94 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
-      // Upload file
-      await _uploadAndSendVoiceMessage(path, duration);
+      // Оптимистично показываем ГС СРАЗУ (играется из локального файла),
+      // а загрузка/отправка идут в фоне.
+      final tempId = await _insertOptimisticVoice(path, duration);
+
+      // Upload file в фоне; tempId нужен для сверки с эхом сервера.
+      await _uploadAndSendVoiceMessage(path, duration, tempId);
     } catch (e) {
       debugPrint('Error stopping recording: $e');
     }
   }
 
-  Future<void> _uploadAndSendVoiceMessage(String path, int duration) async {
+  /// Вставляет локальное "temp" голосовое сообщение, которое отображается мгновенно
+  /// и проигрывается прямо из записанного файла. Возвращает его serverMessageId (temp).
+  Future<String?> _insertOptimisticVoice(String path, int duration) async {
+    final localId = _localChatId;
+    if (localId == null) return null;
+
+    final currentUser = context.read<AuthProvider>().user;
+    final senderId = currentUser?.username ?? currentUser?.id.toString() ?? 'me';
+    final timestamp = DateTime.now();
+    final tempId = 'temp_voice_${timestamp.millisecondsSinceEpoch}';
+
+    final fileInfoJson = jsonEncode({
+      'type': 'voice',
+      'file_id': '',
+      'duration': duration,
+      'mime_type': 'audio/wav',
+      'local_path': path,
+    });
+
+    await _localChatRepo.saveMessage(
+      MessagesCompanion(
+        serverMessageId: Value(tempId),
+        chatId: Value(localId),
+        senderId: Value(senderId),
+        textContent: Value(fileInfoJson),
+        timestamp: Value(timestamp),
+        fileUrl: Value(fileInfoJson),
+        messageType: const Value('voice'),
+      ),
+    );
+
+    _messagesToAnimate.add(tempId);
+    if (mounted) {
+      setState(() {
+        _limit++;
+        _updateStream();
+      });
+    }
+
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+
+    // Обновляем превью чата
+    final updatedChat = ChatModel(
+      id: widget.chat.id,
+      name: widget.chat.name,
+      avatar: widget.chat.avatar,
+      avatarGradient: widget.chat.avatarGradient,
+      lastMessage: '🎤 Голосовое сообщение',
+      lastMessageTime: timestamp,
+      unreadCount: 0,
+      isGroup: widget.chat.isGroup,
+      isChannel: widget.chat.isChannel,
+      isPersonal: widget.chat.isPersonal,
+      isFavorites: widget.chat.isFavorites,
+      otherUser: _otherUser,
+      isEncrypted: false,
+      isArchived: widget.chat.isArchived,
+      archivedAt: widget.chat.archivedAt,
+    );
+    await _localChatRepo.saveChat(updatedChat);
+
+    return tempId;
+  }
+
+  Future<void> _uploadAndSendVoiceMessage(String path, int duration, [String? tempId]) async {
     try {
       final file = File(path);
       if (!await file.exists()) return;
 
       final filename = path.split('/').last;
-      
+
       final formData = FormData.fromMap({
         'file_type': 'audio',
         'chat_id': widget.chat.id,
@@ -1226,26 +1459,33 @@ class _ChatScreenState extends State<ChatScreen> {
           file.path,
           filename: filename,
         ),
-        'mime_type': 'audio/m4a',
+        'mime_type': 'audio/wav',
       });
 
       final apiClient = context.read<ApiClient>();
-      
+
       final response = await apiClient.post(
-        '/api/files/upload/',
+        '/files/upload/',
         data: formData,
       );
 
       if (response.statusCode == 201 && response.data['success'] == true) {
         final fileId = response.data['file_id'] as String;
-        
+
+        // Связываем temp-сообщение и локальный файл с реальным file_id,
+        // чтобы эхо сервера схлопнулось в уже показанное сообщение.
+        if (tempId != null) {
+          _pendingVoiceTempIds[fileId] = tempId;
+          _pendingVoiceLocalPaths[fileId] = path;
+        }
+
         final cryptoService = context.read<CryptoService>();
-        
+
         final voiceMetadata = jsonEncode({
           'type': 'voice',
           'file_id': fileId,
           'duration': duration,
-          'mime_type': 'audio/m4a',
+          'mime_type': 'audio/wav',
         });
 
         debugPrint('Voice metadata prepared: $voiceMetadata');
@@ -3745,12 +3985,17 @@ class MessageBubble extends StatelessWidget {
         final duration = fileData['duration'] is num
             ? (fileData['duration'] as num).toInt()
             : int.tryParse(fileData['duration']?.toString() ?? '') ?? 0;
+        // Если есть локальный путь (только что записанное наше ГС) — играем из него,
+        // не дожидаясь скачивания. Иначе — обычная ссылка на скачивание.
+        final localPath = fileData['local_path']?.toString();
+        final voiceSource = (localPath != null && localPath.isNotEmpty) ? localPath : absoluteUrl;
         attachmentWidget = VoiceMessagePlayer(
-          audioUrl: absoluteUrl,
+          audioUrl: voiceSource,
           duration: duration,
           jwtToken: jwtToken,
           isMe: isMe,
           mimeType: fileData['mime_type']?.toString() ?? mime,
+          senderName: senderRealName,
         );
       } else if (isImage) {
         attachmentWidget = GestureDetector(
@@ -4264,6 +4509,7 @@ class VoiceMessagePlayer extends StatefulWidget {
   final String? jwtToken;
   final bool isMe;
   final String? mimeType;
+  final String senderName;
 
   const VoiceMessagePlayer({
     super.key,
@@ -4272,48 +4518,14 @@ class VoiceMessagePlayer extends StatefulWidget {
     required this.jwtToken,
     required this.isMe,
     this.mimeType,
+    required this.senderName,
   });
 
   @override
   State<VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
 }
 
-class _VoiceMessagePlayerState extends State<VoiceMessagePlayer>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _scale;
-  late final Animation<double> _opacity;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 360),
-    );
-    // Лёгкий overshot 1.0 → эффект «выскакивания» плашки.
-    _scale = Tween<double>(begin: 0.6, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        // Превышает 1.0 и возвращается — даёт bounce на месте.
-        curve: Curves.easeOutBack,
-      ),
-    );
-    _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
-      ),
-    );
-    _controller.forward();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
+class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   String _formatDuration(Duration d) {
     final s = d.inSeconds % 60;
     final m = d.inMinutes;
@@ -4328,28 +4540,39 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer>
     final activeTrackColor = isMe ? const Color(0xFF4ADE80) : Colors.white;
     final inactiveTrackColor = Colors.white.withValues(alpha: 0.2);
 
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        return Opacity(
-          opacity: _opacity.value,
-          child: Transform.scale(
-            scale: _scale.value,
-            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-            child: child,
-          ),
-        );
-      },
-      child: Consumer<PlaybackProvider>(
-        builder: (context, playbackProvider, child) {
+    return Selector<PlaybackProvider, _VoicePlaybackState>(
+        selector: (_, provider) => _VoicePlaybackState(
+          currentAudioUrl: provider.currentAudioUrl,
+          isPlaying: provider.isPlaying,
+          isInitialized: provider.isInitialized,
+          isLoading: provider.isLoading,
+          position: provider.position,
+          duration: provider.duration,
+        ),
+        shouldRebuild: (prev, next) {
+          // Ребилдим только если это наш audioUrl и состояние изменилось
+          final isCurrent = next.currentAudioUrl == widget.audioUrl;
+          final wasCurrent = prev.currentAudioUrl == widget.audioUrl;
+          
+          if (!isCurrent && !wasCurrent) {
+            // Не наш audio - не ребилдим
+            return false;
+          }
+          
+          // Наш audio - проверяем значимые изменения
+          return prev != next;
+        },
+        builder: (context, state, child) {
           final audioUrl = widget.audioUrl;
-          final isCurrent = playbackProvider.currentAudioUrl == audioUrl;
-          final isPlaying = isCurrent && playbackProvider.isPlaying;
-          final isInitialized = isCurrent && playbackProvider.isInitialized;
-          final isLoading = isCurrent && playbackProvider.isLoading;
+          final isCurrent = state.currentAudioUrl == audioUrl;
+          final isPlaying = isCurrent && state.isPlaying;
+          final isInitialized = isCurrent && state.isInitialized;
+          final isLoading = isCurrent && state.isLoading;
 
-          final position = isCurrent ? playbackProvider.position : Duration.zero;
-          final durationVal = isCurrent && playbackProvider.isInitialized ? playbackProvider.duration : Duration(seconds: widget.duration);
+          final position = isCurrent ? state.position : Duration.zero;
+          final durationVal = isCurrent && state.isInitialized && state.duration > Duration.zero
+              ? state.duration 
+              : Duration(seconds: widget.duration);
 
           final displayDuration = isPlaying || (isCurrent && position > Duration.zero) ? position : durationVal;
 
@@ -4364,11 +4587,13 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer>
                 GestureDetector(
                   onTap: () {
                     if (isLoading) return;
+                    final playbackProvider = context.read<PlaybackProvider>();
                     playbackProvider.play(
                       audioUrl,
                       'Голосовое сообщение',
-                      isMe ? 'Вы' : 'Собеседник',
+                      isMe ? 'Вы' : widget.senderName,
                       mimeType: widget.mimeType,
+                      duration: Duration(seconds: widget.duration),
                     );
                   },
                   child: Container(
@@ -4410,32 +4635,30 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Slider
-                      SizedBox(
-                        height: 16,
-                        child: SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 2.5,
-                            trackShape: _CustomTrackShape(),
-                            thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 4.5,
-                              elevation: 2,
-                            ),
-                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-                            activeTrackColor: activeTrackColor,
-                            inactiveTrackColor: inactiveTrackColor,
-                            thumbColor: activeTrackColor,
-                          ),
-                          child: Slider(
-                            value: position.inMilliseconds.toDouble().clamp(0.0, durationVal.inMilliseconds.toDouble() > 0 ? durationVal.inMilliseconds.toDouble() : 1.0),
-                            max: durationVal.inMilliseconds.toDouble() > 0 ? durationVal.inMilliseconds.toDouble() : 1.0,
-                            onChanged: isCurrent && isInitialized
-                                ? (val) {
-                                    playbackProvider.seek(Duration(milliseconds: val.toInt()));
-                                  }
-                                : null,
-                          ),
-                        ),
+                      // Waveform Slider
+                      VoiceWaveformSlider(
+                        position: position,
+                        duration: durationVal,
+                        isActive: isCurrent && isInitialized,
+                        // Финальный seek — один раз, когда палец отпущен.
+                        // Тяжёлая операция: пересоздаёт AudioSource.
+                        onSeek: isCurrent && isInitialized
+                            ? (newPosition) {
+                                context.read<PlaybackProvider>().seek(newPosition);
+                              }
+                            : null,
+                        // Превью во время драга — на каждое движение пальца.
+                        // Лёгкая операция: просто двигает позицию в UI,
+                        // не трогает плеер. Без этого guard _isSeeking в
+                        // провайдере отбрасывал бы почти все промежуточные
+                        // вызовы seek(), и слайдер выглядел нерабочим.
+                        onSeekPreview: isCurrent && isInitialized
+                            ? (newPosition) {
+                                context.read<PlaybackProvider>().seekPreview(newPosition);
+                              }
+                            : null,
+                        activeColor: activeTrackColor,
+                        inactiveColor: inactiveTrackColor,
                       ),
                       const SizedBox(height: 2),
                       Padding(
@@ -4456,25 +4679,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer>
             ),
           );
         },
-      ),
     );
-  }
-}
-
-class _CustomTrackShape extends RoundedRectSliderTrackShape {
-  @override
-  Rect getPreferredRect({
-    required RenderBox parentBox,
-    Offset offset = Offset.zero,
-    required SliderThemeData sliderTheme,
-    bool isEnabled = false,
-    bool isDiscrete = false,
-  }) {
-    final double trackHeight = sliderTheme.trackHeight ?? 2.0;
-    final double trackLeft = offset.dx;
-    final double trackTop = offset.dy + (parentBox.size.height - trackHeight) / 2;
-    final double trackWidth = parentBox.size.width;
-    return Rect.fromLTWH(trackLeft, trackTop, trackWidth, trackHeight);
   }
 }
 

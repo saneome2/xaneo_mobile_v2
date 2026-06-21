@@ -17,6 +17,7 @@ class ChatModel {
   final bool isEncrypted;
   final bool isArchived;
   final DateTime? archivedAt;
+  final String? lastMessageType;
 
   ChatModel({
     required this.id,
@@ -34,6 +35,7 @@ class ChatModel {
     this.isEncrypted = false,
     this.isArchived = false,
     this.archivedAt,
+    this.lastMessageType,
   });
 
   factory ChatModel.fromJson(Map<String, dynamic> json) {
@@ -94,6 +96,14 @@ class ChatModel {
     // Получаем зашифрованный текст сообщения
     final encryptedText = json['last_message']?['encrypted_text'] as String? ??
         json['lastMessage']?['encrypted_text'] as String?;
+
+    // Получаем тип сообщения
+    String? messageType;
+    if (json['last_message'] is Map) {
+      messageType = json['last_message']['message_type']?.toString();
+    } else if (json['lastMessage'] is Map) {
+      messageType = json['lastMessage']['message_type']?.toString();
+    }
 
     String? lastMsg;
     bool isEncrypted = false;
@@ -211,6 +221,7 @@ class ChatModel {
       isEncrypted: isEncrypted,
       isArchived: isArchived,
       archivedAt: archivedAt,
+      lastMessageType: messageType,
       otherUser: otherUserMap.isNotEmpty ? otherUserMap : null,
     );
   }
@@ -305,10 +316,42 @@ class ChatModel {
 
   static bool _looksLikeStructuredPayload(String text) {
     final trimmed = text.trim();
-    if (trimmed.startsWith('{') && trimmed.endsWith('}')) return true;
+    
+    // Проверяем на явные признаки зашифрованного payload
     final hasNonce = RegExp(r'nonce\s*[:=]').hasMatch(trimmed);
     final hasCipher = RegExp(r'ciphertext\s*[:=]|encrypted_data\s*[:=]').hasMatch(trimmed);
-    return hasNonce && hasCipher;
+    
+    if (hasNonce && hasCipher) {
+      return true;
+    }
+    
+    // Если это JSON объект, проверяем что это НЕ обычное сообщение
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        final parsed = jsonDecode(trimmed);
+        if (parsed is Map) {
+          // Если есть поля обычного сообщения (id, creator_id, message_type), 
+          // это НЕ зашифрованный payload
+          if (parsed.containsKey('id') || 
+              parsed.containsKey('creator_id') || 
+              parsed.containsKey('message_type') ||
+              parsed.containsKey('created_at')) {
+            return false;
+          }
+          // Если есть поля зашифрованного сообщения
+          if (parsed.containsKey('nonce') || 
+              parsed.containsKey('ciphertext') || 
+              parsed.containsKey('encrypted_data')) {
+            return true;
+          }
+        }
+      } catch (_) {
+        // Если не удалось распарсить, считаем что это может быть зашифрованное
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   /// Получить отображаемое сообщение
@@ -322,11 +365,24 @@ class ChatModel {
     }
 
     final trimmed = lastMessage!.trim();
+    
+    // Проверяем если lastMessage - это JSON объект сообщения
     if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
       try {
         final parsed = jsonDecode(trimmed);
         if (parsed is Map) {
+          // Сначала проверяем message_type в корне объекта (для poll/todo)
+          final messageType = parsed['message_type']?.toString();
+          
+          if (messageType == 'poll') {
+            return '📊 Опрос';
+          } else if (messageType == 'todo_list') {
+            return '✅ Список задач';
+          }
+          
+          // Затем проверяем type для файлов/голосовых
           final fileType = parsed['type']?.toString();
+          
           if (fileType == 'voice' || fileType == 'voice_message') {
             return '🎙 Голосовое сообщение';
           } else if (fileType == 'todo_list') {
@@ -370,11 +426,40 @@ class ChatModel {
             }
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        // Игнорируем ошибку парсинга
+      }
     }
 
-    // Если сообщение зашифровано (base64 payload), показываем плейсхолдер
+    // Сначала проверяем тип сообщения из API (если был передан отдельно)
+    if (lastMessageType != null) {
+      switch (lastMessageType) {
+        case 'todo_list':
+          return '✅ Список задач';
+        case 'poll':
+          return '📊 Опрос';
+        case 'voice':
+        case 'voice_message':
+          return '🎙 Голосовое сообщение';
+      }
+    }
+
+    // Если сообщение зашифровано (base64 payload), проверяем тип
     if (isEncryptedMessage || _looksLikeStructuredPayload(lastMessage!)) {
+      // Если известен тип сообщения, показываем его
+      if (lastMessageType != null) {
+        switch (lastMessageType) {
+          case 'todo_list':
+            return '🔒 Список задач';
+          case 'poll':
+            return '🔒 Опрос';
+          case 'voice':
+          case 'voice_message':
+            return '🔒 Голосовое сообщение';
+          default:
+            return 'Зашифрованное сообщение';
+        }
+      }
       return 'Зашифрованное сообщение';
     }
 

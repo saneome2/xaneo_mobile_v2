@@ -1364,7 +1364,13 @@ class _ChatListScreenState extends State<ChatListScreen>
   }
 
   Widget _buildMessageText(ChatModel chat) {
-    final isEncrypted = chat.isEncryptedMessage || chat.displayMessage == 'Зашифрованное сообщение';
+    // Сообщение считается зашифрованным для отображения замка, если:
+    // 1. Оно помечено как зашифрованное
+    // 2. И отображаемый текст это действительно "Зашифрованное сообщение"
+    //    (а не конкретный тип вроде "📊 Опрос" или "✅ Список задач")
+    final isEncrypted = chat.isEncryptedMessage && 
+        chat.displayMessage == 'Зашифрованное сообщение';
+    
     return Row(
       children: [
         if (isEncrypted) ...[

@@ -95,6 +95,14 @@ class LocalChatRepository {
         .go();
   }
 
+  /// Удаление одного сообщения по серверному ID (например, temp-сообщения
+  /// оптимистичной отправки при сверке с эхом сервера)
+  Future<int> deleteMessageByServerId(String serverMessageId) {
+    return (_db.delete(_db.messages)
+          ..where((m) => m.serverMessageId.equals(serverMessageId)))
+        .go();
+  }
+
   /// Пакетное сохранение чатов из API в локальную БД
   Future<void> saveChatsBatch(List<ChatModel> chatModels) async {
     await _db.transaction(() async {
