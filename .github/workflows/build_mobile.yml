@@ -69,6 +69,19 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Patch camera_avfoundation for Xcode 16 / iOS 18 compatibility
+        run: |
+          SWIFT_FILE=$(find ~/.pub-cache -name "DefaultCamera.swift" | head -1)
+          if [ -n "$SWIFT_FILE" ]; then
+            echo "Patching $SWIFT_FILE..."
+            sed -i '' \
+              -e 's/AVCaptureSession\.wasInterruptedNotification/NSNotification.Name("AVCaptureSessionWasInterruptedNotification")/g' \
+              -e 's/AVCaptureSession\.runtimeErrorNotification/NSNotification.Name("AVCaptureSessionRuntimeErrorNotification")/g' \
+              "$SWIFT_FILE"
+          else
+            echo "DefaultCamera.swift not found in pub cache"
+          fi
+
       - name: Run Code Generation (Drift database classes)
         run: dart run build_runner build --delete-conflicting-outputs
 
