@@ -33,6 +33,10 @@ import '../../utils/local_proxy.dart';
 import 'package:record/record.dart';
 import 'widgets/todo_poll_widgets.dart';
 import '../../widgets/common/create_poll_todo_modals.dart';
+import 'package:camera/camera.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../widgets/video_message_player.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../providers/playback_provider.dart';
 import '../../widgets/voice_waveform_slider.dart';
 
@@ -105,6 +109,16 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _recordingTimer;
   int _recordingDurationSeconds = 0;
   double _dragOffset = 0.0;
+  bool _isHoldingButton = false;
+
+  // Video recording state variables
+  CameraController? _cameraController;
+  List<CameraDescription> _cameras = [];
+  bool _isRecordingVideo = false;
+  Timer? _videoRecordingTimer;
+  double _videoRecordingDurationSeconds = 0.0;
+  final Map<String, String> _pendingVideoTempIds = {}; // file_id -> temp serverMessageId
+  final Map<String, String> _pendingVideoLocalPaths = {}; // file_id -> локальный путь к записи
   late Stream<List<Message>> _messagesStream;
 
   // Local copy of otherUser to reflect WS status updates
@@ -150,10 +164,19 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _loadCameras() async {
+    try {
+      _cameras = await availableCameras();
+    } catch (e) {
+      debugPrint('Error loading cameras: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _loadJwtToken();
+    _loadCameras();
     _otherUser = widget.chat.otherUser != null ? Map<String, dynamic>.from(widget.chat.otherUser!) : null;
     _localChatRepo = context.read<LocalChatRepository>();
     _chatService = ChatService(apiClient: context.read<ApiClient>());
@@ -186,6 +209,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _recordingTimer?.cancel();
     _audioRecorder.dispose();
+    _videoRecordingTimer?.cancel();
+    _cameraController?.dispose();
     super.dispose();
   }
 
@@ -239,17 +264,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollListener() {
-    debugPrint('📜 ChatScreen: _scrollListener called');
-    debugPrint('  hasClients: ${_scrollController.hasClients}');
-    if (_scrollController.hasClients) {
-      debugPrint('  pixels: ${_scrollController.position.pixels}');
-      debugPrint('  maxScrollExtent: ${_scrollController.position.maxScrollExtent}');
-    }
-    
     // If we scroll close to the top (maxScrollExtent), load more history
     if (_scrollController.hasClients &&
         _scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-      debugPrint('  ✅ Triggering _loadMoreMessages');
       _loadMoreMessages();
     }
   }
@@ -365,7 +382,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (decrypted != null && decrypted.trim().startsWith('{')) {
             try {
               final parsed = jsonDecode(decrypted);
-              if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice') && parsed['file_id'] != null) {
+              if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice' || parsed['type'] == 'video_message') && parsed['file_id'] != null) {
                 fileInfoJson = decrypted;
               }
             } catch (_) {}
@@ -516,7 +533,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (decrypted != null && decrypted.trim().startsWith('{')) {
             try {
               final parsed = jsonDecode(decrypted);
-              if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice') && parsed['file_id'] != null) {
+              if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice' || parsed['type'] == 'video_message') && parsed['file_id'] != null) {
                 fileInfoJson = decrypted;
               }
             } catch (_) {}
@@ -589,7 +606,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _handleWsEvent(Map<String, dynamic> event) async {
     final type = event['type']?.toString();
-    debugPrint('WS_EVENT: type=$type, chat_id=${event['chat_id']}, keys=${event.keys.toList()}');
 
     // Handle server-side error responses
     if (type == 'error') {
@@ -724,6 +740,11 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    if (type == 'video_message') {
+      await _handleIncomingVideoMessage(event);
+      return;
+    }
+
     if (type != 'encrypted_message' && type != 'poll_message' && type != 'todo_list_message') {
       if (type == 'todo_completion_update') {
         await _handleTodoCompletionUpdate(event);
@@ -759,7 +780,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (decrypted != null && decrypted.trim().startsWith('{')) {
         try {
           final parsed = jsonDecode(decrypted);
-          if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice') && parsed['file_id'] != null) {
+          if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice' || parsed['type'] == 'video_message') && parsed['file_id'] != null) {
             fileInfoJson = decrypted;
           }
         } catch (_) {}
@@ -938,6 +959,479 @@ class _ChatScreenState extends State<ChatScreen> {
     await _localChatRepo.saveChat(updatedChat);
   }
 
+  Future<void> _handleIncomingVideoMessage(Map<String, dynamic> event) async {
+    final chatId = event['chat_id']?.toString();
+    if (chatId == null || chatId != widget.chat.id) return;
+
+    final localId = _localChatId;
+    if (localId == null) return;
+
+    final fileId = event['file_id']?.toString();
+    if (fileId == null) return;
+
+    final timestamp = _parseDateTime(event['created_at']) ?? DateTime.now();
+    final senderId = event['author_username']?.toString() ??
+        event['author_id']?.toString() ??
+        event['sender_id']?.toString() ??
+        'system';
+    final msgId = event['id']?.toString() ??
+        event['message_id']?.toString() ??
+        'ws_${timestamp.millisecondsSinceEpoch}';
+
+    final duration = event['duration'] is num
+        ? (event['duration'] as num).toDouble()
+        : double.tryParse(event['duration']?.toString() ?? '') ?? 0.0;
+
+    final String? tempId = _pendingVideoTempIds.remove(fileId);
+    final String? localPath = _pendingVideoLocalPaths.remove(fileId);
+    final bool isOwnEcho = tempId != null;
+
+    if (isOwnEcho) {
+      await _localChatRepo.deleteMessageByServerId(tempId);
+      _messagesToAnimate.remove(tempId);
+      _animatedMessageIds.add(msgId);
+    }
+
+    final fileInfoJson = jsonEncode({
+      'type': 'video_message',
+      'file_id': fileId,
+      'duration': duration,
+      'mime_type': 'video/mp4',
+      if (localPath != null) 'local_path': localPath,
+    });
+
+    final bool isAlreadyKnown = isOwnEcho ||
+        _initialMessageIds.contains(msgId) ||
+        _animatedMessageIds.contains(msgId);
+
+    await _localChatRepo.saveMessage(
+      MessagesCompanion(
+        serverMessageId: Value(msgId),
+        chatId: Value(localId),
+        senderId: Value(senderId),
+        textContent: Value(fileInfoJson),
+        timestamp: Value(timestamp),
+        fileUrl: Value(fileInfoJson),
+        messageType: const Value('video_message'),
+        messageId: Value(msgId),
+      ),
+    );
+
+    if (!isAlreadyKnown) {
+      _messagesToAnimate.add(msgId);
+    }
+    if (mounted) {
+      setState(() {
+        if (!isAlreadyKnown) _limit++;
+        _updateStream();
+      });
+    }
+
+    _chatService.markMessagesAsRead(widget.chat.id);
+
+    final updatedChat = ChatModel(
+      id: widget.chat.id,
+      name: widget.chat.name,
+      avatar: widget.chat.avatar,
+      avatarGradient: widget.chat.avatarGradient,
+      lastMessage: '📹 Видеосообщение',
+      lastMessageTime: timestamp,
+      unreadCount: 0,
+      isGroup: widget.chat.isGroup,
+      isChannel: widget.chat.isChannel,
+      isPersonal: widget.chat.isPersonal,
+      isFavorites: widget.chat.isFavorites,
+      otherUser: _otherUser,
+      isEncrypted: false,
+      isArchived: widget.chat.isArchived,
+      archivedAt: widget.chat.archivedAt,
+    );
+    await _localChatRepo.saveChat(updatedChat);
+  }
+
+  Future<String?> _insertOptimisticVideoMessage(String path, double duration) async {
+    final localId = _localChatId;
+    if (localId == null) return null;
+
+    final currentUser = context.read<AuthProvider>().user;
+    final senderId = currentUser?.username ?? currentUser?.id.toString() ?? 'me';
+    final timestamp = DateTime.now();
+    final tempId = 'temp_video_${timestamp.millisecondsSinceEpoch}';
+
+    final fileInfoJson = jsonEncode({
+      'type': 'video_message',
+      'file_id': tempId,
+      'duration': duration,
+      'mime_type': 'video/mp4',
+      'local_path': path,
+    });
+
+    await _localChatRepo.saveMessage(
+      MessagesCompanion(
+        serverMessageId: Value(tempId),
+        chatId: Value(localId),
+        senderId: Value(senderId),
+        textContent: Value(fileInfoJson),
+        timestamp: Value(timestamp),
+        fileUrl: Value(fileInfoJson),
+        messageType: const Value('video_message'),
+        messageId: Value(tempId),
+      ),
+    );
+
+    if (mounted) {
+      setState(() {
+        _limit++;
+        _updateStream();
+      });
+    }
+
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          0.0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
+    final updatedChat = ChatModel(
+      id: widget.chat.id,
+      name: widget.chat.name,
+      avatar: widget.chat.avatar,
+      avatarGradient: widget.chat.avatarGradient,
+      lastMessage: '📹 Видеосообщение (${duration.toStringAsFixed(1)} сек.)',
+      lastMessageTime: timestamp,
+      unreadCount: widget.chat.unreadCount,
+      isGroup: widget.chat.isGroup,
+      isChannel: widget.chat.isChannel,
+      isPersonal: widget.chat.isPersonal,
+      isFavorites: widget.chat.isFavorites,
+      otherUser: _otherUser,
+      isEncrypted: false,
+      isArchived: widget.chat.isArchived,
+      archivedAt: widget.chat.archivedAt,
+    );
+    await _localChatRepo.saveChat(updatedChat);
+
+    return tempId;
+  }
+
+  Future<bool> _requestCameraPermissions() async {
+    final cameraStatus = await Permission.camera.request();
+    final micStatus = await Permission.microphone.request();
+    return cameraStatus.isGranted && micStatus.isGranted;
+  }
+
+  Future<CameraDescription?> _getCameraToUse() async {
+    if (_cameras.isEmpty) {
+      _cameras = await availableCameras();
+    }
+    if (_cameras.isEmpty) return null;
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedDirection = prefs.getString('last_used_camera_lens_direction') ?? 'front';
+
+    CameraDescription? selectedCamera;
+    if (savedDirection == 'back') {
+      selectedCamera = _cameras.firstWhere(
+        (cam) => cam.lensDirection == CameraLensDirection.back,
+        orElse: () => _cameras.first,
+      );
+    } else {
+      selectedCamera = _cameras.firstWhere(
+        (cam) => cam.lensDirection == CameraLensDirection.front,
+        orElse: () => _cameras.first,
+      );
+    }
+    return selectedCamera;
+  }
+
+  Future<void> _toggleCamera() async {
+    if (_cameras.length < 2) return;
+    if (_cameraController == null) return;
+
+    final currentLens = _cameraController!.description.lensDirection;
+    final nextLens = currentLens == CameraLensDirection.front
+        ? CameraLensDirection.back
+        : CameraLensDirection.front;
+
+    final nextCam = _cameras.firstWhere(
+      (cam) => cam.lensDirection == nextLens,
+      orElse: () => _cameras.first,
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'last_used_camera_lens_direction',
+      nextLens == CameraLensDirection.back ? 'back' : 'front',
+    );
+
+    await _cameraController!.dispose();
+    _cameraController = CameraController(
+      nextCam,
+      ResolutionPreset.medium,
+      enableAudio: true,
+    );
+
+    try {
+      await _cameraController!.initialize();
+      if (_isRecordingVideo) {
+        await _cameraController!.startVideoRecording();
+      }
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Error toggling camera: $e');
+    }
+  }
+
+  Future<void> _startVideoRecording() async {
+    try {
+      final hasPermission = await _requestCameraPermissions();
+      if (!hasPermission) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Требуется разрешение на камеру и микрофон')),
+          );
+        }
+        return;
+      }
+
+      final camera = await _getCameraToUse();
+      if (camera == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Камера не найдена')),
+          );
+        }
+        return;
+      }
+
+      _cameraController = CameraController(
+        camera,
+        ResolutionPreset.medium,
+        enableAudio: true,
+      );
+
+      try {
+        await Feedback.forLongPress(context);
+      } catch (_) {}
+
+      await _cameraController!.initialize();
+
+      if (!_isHoldingButton) {
+        await _cameraController!.dispose();
+        _cameraController = null;
+        return;
+      }
+
+      await _cameraController!.startVideoRecording();
+
+      if (!_isHoldingButton) {
+        try {
+          await _cameraController!.stopVideoRecording();
+        } catch (_) {}
+        await _cameraController!.dispose();
+        _cameraController = null;
+        return;
+      }
+
+      _sendTypingEvent(true, action: 'recording_voice');
+
+      if (mounted) {
+        setState(() {
+          _isRecordingVideo = true;
+          _videoRecordingDurationSeconds = 0.0;
+          _dragOffset = 0.0;
+        });
+      }
+
+      _videoRecordingTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+        if (mounted) {
+          setState(() {
+            _videoRecordingDurationSeconds += 0.1;
+          });
+          if (_videoRecordingDurationSeconds >= 60.0) {
+            _stopAndSendVideoRecording();
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint('Error starting video recording: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка инициализации камеры: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelVideoRecording() async {
+    if (!_isRecordingVideo) return;
+    try {
+      _videoRecordingTimer?.cancel();
+      _videoRecordingTimer = null;
+
+      if (_cameraController != null) {
+        try {
+          final file = await _cameraController!.stopVideoRecording();
+          final localFile = File(file.path);
+          if (await localFile.exists()) {
+            await localFile.delete();
+          }
+        } catch (_) {}
+        await _cameraController!.dispose();
+        _cameraController = null;
+      }
+
+      _sendTypingEvent(false);
+
+      if (mounted) {
+        setState(() {
+          _isRecordingVideo = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Запись видео отменена'),
+            backgroundColor: Colors.redAccent.withValues(alpha: 0.9),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error cancelling video recording: $e');
+    }
+  }
+
+  Future<void> _stopAndSendVideoRecording() async {
+    if (!_isRecordingVideo) return;
+    try {
+      _videoRecordingTimer?.cancel();
+      _videoRecordingTimer = null;
+
+      if (_cameraController == null) return;
+      
+      final XFile file;
+      try {
+        file = await _cameraController!.stopVideoRecording();
+      } catch (e) {
+        debugPrint('Error stopping video recording: $e');
+        return;
+      } finally {
+        await _cameraController!.dispose();
+        _cameraController = null;
+      }
+
+      _sendTypingEvent(false);
+
+      final path = file.path;
+      final duration = _videoRecordingDurationSeconds;
+
+      if (mounted) {
+        setState(() {
+          _isRecordingVideo = false;
+        });
+      }
+
+      if (duration < 1.0) {
+        final localFile = File(path);
+        if (await localFile.exists()) {
+          await localFile.delete();
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Слишком короткое видеосообщение'),
+              backgroundColor: Colors.orangeAccent.withValues(alpha: 0.9),
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        }
+        return;
+      }
+
+      final tempId = await _insertOptimisticVideoMessage(path, duration);
+      await _uploadAndSendVideoMessage(path, duration, tempId);
+    } catch (e) {
+      debugPrint('Error stopping video recording: $e');
+    }
+  }
+
+  Future<void> _uploadAndSendVideoMessage(String path, double duration, [String? tempId]) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return;
+
+      final filename = path.split('/').last;
+
+      final formData = FormData.fromMap({
+        'file_type': 'video_message',
+        'chat_id': widget.chat.id,
+        'file': await MultipartFile.fromFile(
+          file.path,
+          filename: filename,
+        ),
+        'duration': duration,
+      });
+
+      final apiClient = context.read<ApiClient>();
+
+      final response = await apiClient.post(
+        '/files/upload/',
+        data: formData,
+      );
+
+      if (response.statusCode == 201 && response.data['success'] == true) {
+        final fileId = response.data['file_id'] as String;
+
+        if (tempId != null) {
+          _pendingVideoTempIds[fileId] = tempId;
+          _pendingVideoLocalPaths[fileId] = path;
+        }
+
+        final cryptoService = context.read<CryptoService>();
+
+        final videoMetadata = jsonEncode({
+          'type': 'video_message',
+          'file_id': fileId,
+          'duration': duration,
+          'mime_type': 'video/mp4',
+        });
+
+        final encryptedText = await cryptoService.encryptMessage(videoMetadata, widget.chat.id);
+
+        if (encryptedText != null) {
+          await _chatWebSocketService.send({
+            'type': 'video_message',
+            'file_id': fileId,
+            'duration': duration,
+            'chat_id': widget.chat.id,
+            'encrypted_text': encryptedText,
+          });
+        } else {
+          await _chatWebSocketService.send({
+            'type': 'video_message',
+            'file_id': fileId,
+            'duration': duration,
+            'chat_id': widget.chat.id,
+          });
+        }
+      } else {
+        throw Exception('Failed to upload video message to backend');
+      }
+    } catch (e) {
+      debugPrint('Error uploading video message: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка отправки видеосообщения: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _handleTodoCompletionUpdate(Map<String, dynamic> event) async {
     final messageId = event['todo_message_id']?.toString();
     final itemIndex = event['item_index'];
@@ -1075,11 +1569,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // 2. Encrypt & send E2EE over WS
     try {
-      debugPrint('SEND_MSG: encrypting for chat ${widget.chat.id}...');
       final encryptedText = await cryptoService.encryptMessage(text, widget.chat.id);
       
       if (encryptedText != null) {
-        debugPrint('SEND_MSG: encrypted ok, len=${encryptedText.length}, sending over WS...');
         await _chatWebSocketService.send({
           'type': 'encrypted_message',
           'chat_id': widget.chat.id,
@@ -1087,7 +1579,6 @@ class _ChatScreenState extends State<ChatScreen> {
           'images': [],
           'image': null,
         });
-        debugPrint('SEND_MSG: sent over WS');
       } else {
         debugPrint('SEND_MSG: encryption returned null, key not available for chat ${widget.chat.id}');
       }
@@ -1488,7 +1979,6 @@ class _ChatScreenState extends State<ChatScreen> {
           'mime_type': 'audio/wav',
         });
 
-        debugPrint('Voice metadata prepared: $voiceMetadata');
         final encryptedText = await cryptoService.encryptMessage(voiceMetadata, widget.chat.id);
 
         if (encryptedText != null) {
@@ -1499,7 +1989,6 @@ class _ChatScreenState extends State<ChatScreen> {
             'chat_id': widget.chat.id,
             'encrypted_text': encryptedText,
           });
-          debugPrint('Voice message sent over WS successfully!');
         } else {
           debugPrint('Failed to encrypt voice metadata');
         }
@@ -1594,8 +2083,110 @@ class _ChatScreenState extends State<ChatScreen> {
 
             // Mini Media Player
             _buildMiniPlayer(),
+
+            if (_isRecordingVideo && _cameraController != null && _cameraController!.value.isInitialized)
+              _buildVideoRecordingOverlay(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildVideoRecordingOverlay() {
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          // 1. Background dimmer & preview circle - ignores pointer events to prevent blocking input gestures underneath
+          IgnorePointer(
+            ignoring: true,
+            child: Container(
+              color: Colors.black54,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 260,
+                      height: 260,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 3.5),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black45,
+                            blurRadius: 15,
+                            spreadRadius: 2,
+                          )
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: AspectRatio(
+                          aspectRatio: 1.0,
+                          child: FittedBox(
+                            fit: BoxFit.cover,
+                            child: SizedBox(
+                              width: 260,
+                              height: 260 * _cameraController!.value.aspectRatio,
+                              child: CameraPreview(_cameraController!),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black45,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        _formatRecordingDuration(_videoRecordingDurationSeconds.toInt()),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Удерживайте кнопку для записи',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // 2. Interactive overlay controls - positioned to be clickable without overlapping the record button
+          Positioned(
+            left: 0,
+            right: 0,
+            top: MediaQuery.of(context).size.height / 2 + 180,
+            child: Center(
+              child: GestureDetector(
+                onTap: _toggleCamera,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: const BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.flip_camera_ios,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2549,8 +3140,11 @@ class _ChatScreenState extends State<ChatScreen> {
                               : GestureDetector(
                                   key: const ValueKey('mic_video_toggle'),
                                   onLongPressStart: (_) async {
+                                    _isHoldingButton = true;
                                     if (_isVoiceMode) {
                                       await _startRecording();
+                                    } else {
+                                      await _startVideoRecording();
                                     }
                                   },
                                   onLongPressMoveUpdate: (details) {
@@ -2559,13 +3153,33 @@ class _ChatScreenState extends State<ChatScreen> {
                                         _dragOffset = details.offsetFromOrigin.dx.clamp(-120.0, 0.0);
                                       });
                                       if (_dragOffset < -100) {
+                                        _isHoldingButton = false;
                                         _cancelRecording();
+                                      }
+                                    } else if (!_isVoiceMode && _isRecordingVideo) {
+                                      setState(() {
+                                        _dragOffset = details.offsetFromOrigin.dx.clamp(-120.0, 0.0);
+                                      });
+                                      if (_dragOffset < -100) {
+                                        _isHoldingButton = false;
+                                        _cancelVideoRecording();
                                       }
                                     }
                                   },
                                   onLongPressEnd: (_) async {
+                                    _isHoldingButton = false;
                                     if (_isVoiceMode && _isRecording) {
                                       await _stopAndSendRecording();
+                                    } else if (!_isVoiceMode && _isRecordingVideo) {
+                                      await _stopAndSendVideoRecording();
+                                    }
+                                  },
+                                  onLongPressCancel: () async {
+                                    _isHoldingButton = false;
+                                    if (_isVoiceMode) {
+                                      await _cancelRecording();
+                                    } else {
+                                      await _cancelVideoRecording();
                                     }
                                   },
                                   onTap: () {
@@ -2575,10 +3189,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                   },
                                   child: AnimatedContainer(
                                     duration: const Duration(milliseconds: 200),
-                                    width: _isRecording ? 42 : 38,
-                                    height: _isRecording ? 42 : 38,
+                                    width: (_isRecording || _isRecordingVideo) ? 42 : 38,
+                                    height: (_isRecording || _isRecordingVideo) ? 42 : 38,
                                     decoration: BoxDecoration(
-                                      color: _isRecording ? Colors.red : Colors.white.withValues(alpha: 0.1),
+                                      color: (_isRecording || _isRecordingVideo) ? Colors.red : Colors.white.withValues(alpha: 0.1),
                                       shape: BoxShape.circle,
                                     ),
                                     child: Center(
@@ -2604,7 +3218,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                               : FontAwesomeIcons.video,
                                           key: ValueKey(_isVoiceMode ? 'mic' : 'video'),
                                           color: Colors.white,
-                                          size: _isRecording ? 18 : 16,
+                                          size: (_isRecording || _isRecordingVideo) ? 18 : 16,
                                         ),
                                       ),
                                     ),
@@ -2639,6 +3253,56 @@ class _ChatScreenState extends State<ChatScreen> {
                       const SizedBox(width: 10),
                       Text(
                         _formatRecordingDuration(_recordingDurationSeconds),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Transform.translate(
+                        offset: Offset(_dragOffset, 0),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.chevron_left, 
+                              color: Colors.white.withValues(alpha: 0.5), 
+                              size: 16,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              'Смахните для отмены',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5), 
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (_isRecordingVideo)
+            Positioned(
+              left: 4,
+              top: 4,
+              bottom: 4,
+              right: 80,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  color: const Color(0xFF161618),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      const _BlinkingRedDot(),
+                      const SizedBox(width: 10),
+                      Text(
+                        _formatRecordingDuration(_videoRecordingDurationSeconds.toInt()),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 15,
@@ -3903,7 +4567,6 @@ class MessageBubble extends StatelessWidget {
         final parsed = jsonDecode(message.fileUrl!);
         if (parsed is Map) {
           fileData = Map<String, dynamic>.from(parsed);
-          debugPrint('DEBUG FILE DATA: $fileData');
           // Если в тексте сообщения была сериализованная копия JSON, очищаем отображение текста
           if (message.textContent.trim().startsWith('{')) {
             displayContent = '';
@@ -3964,8 +4627,10 @@ class MessageBubble extends StatelessWidget {
           lowerName.endsWith('.wav') ||
           lowerName.endsWith('.mp3');
 
+      final isVideoMessage = fileData['type'] == 'video_message';
+
       isOnlyFile = displayContent.isEmpty;
-      isOnlyMedia = isOnlyFile && (isImage || isVideo);
+      isOnlyMedia = isOnlyFile && (isImage || isVideo || isVideoMessage);
 
       if (fileData['type'] == 'todo_list') {
         attachmentWidget = TodoListWidget(
@@ -3980,6 +4645,18 @@ class MessageBubble extends StatelessWidget {
           chatWebSocketService: context.watch<ChatWebSocketService>(),
           localChatRepo: context.watch<LocalChatRepository>(),
           onStateChanged: () {},
+        );
+      } else if (isVideoMessage) {
+        final duration = fileData['duration'] is num
+            ? (fileData['duration'] as num).toDouble()
+            : double.tryParse(fileData['duration']?.toString() ?? '') ?? 0.0;
+        final localPath = fileData['local_path']?.toString();
+        final videoSource = (localPath != null && localPath.isNotEmpty) ? localPath : absoluteUrl;
+        attachmentWidget = VideoMessagePlayer(
+          videoUrl: videoSource,
+          jwtToken: jwtToken,
+          duration: duration,
+          localPath: localPath,
         );
       } else if (isVoice) {
         final duration = fileData['duration'] is num

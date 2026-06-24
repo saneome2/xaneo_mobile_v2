@@ -285,7 +285,6 @@ class PlaybackProvider extends ChangeNotifier {
     if (_currentFilePath == null) return;
 
     _isSeeking = true;
-    debugPrint('🎵 seek to $pos (reinitializing player)');
 
     _position = pos;
     notifyListeners();
@@ -297,7 +296,6 @@ class PlaybackProvider extends ChangeNotifier {
     _seekTargetPosition = pos;
     _seekCompletedAt = DateTime.now();
 
-    debugPrint('✅ seek to $pos done');
     _isSeeking = false;
   }
 

@@ -31,17 +31,12 @@ class AuthService {
   /// Возвращает MobileLoginResult:
   /// - Если у пользователя включен 2FA: requiresTfa = true, tempToken для верификации
   /// - Если вход успешен: isSuccess = true, userInfo содержит данные пользователя
-  /// 
-  /// ВАЖНО: mobile-login API НЕ возвращает JWT токены!
-  /// Для получения токенов нужно использовать обычный login endpoint.
+  ///
   Future<MobileLoginResult> mobileLogin({
     required String username,
     required String password,
   }) async {
     try {
-      debugPrint('=== Mobile Login Request ===');
-      debugPrint('Username: $username');
-      
       final response = await _apiClient.post(
         AppConfig.authMobileLogin,
         data: {
@@ -50,29 +45,15 @@ class AuthService {
         },
       );
 
-      debugPrint('=== Mobile Login Response ===');
-      debugPrint('Status Code: ${response.statusCode}');
-      debugPrint('Data: ${response.data}');
-      
       final mobileResponse = MobileLoginResponse.fromJson(response.data);
       
-      debugPrint('Parsed response:');
-      debugPrint('  authSuccess: ${mobileResponse.authSuccess}');
-      debugPrint('  tfaRequired: ${mobileResponse.tfaRequired}');
-      debugPrint('  requiresTfa: ${mobileResponse.requiresTfa}');
-      debugPrint('  isSuccess: ${mobileResponse.isSuccess}');
-      debugPrint('  userInfo: ${mobileResponse.userInfo}');
-      debugPrint('  message: ${mobileResponse.message}');
-
       // Если требуется 2FA
       if (mobileResponse.requiresTfa) {
-        debugPrint('=> 2FA Required');
         return MobileLoginResult.fromTfaRequired(mobileResponse);
       }
 
       // Если вход успешен (без 2FA)
       if (mobileResponse.isSuccess) {
-        debugPrint('=> Login Success');
         // Сохраняем данные пользователя (без токенов)
         if (mobileResponse.userInfo != null) {
           await _tokenStorage.saveUserData(mobileResponse.userInfo!.toJson());

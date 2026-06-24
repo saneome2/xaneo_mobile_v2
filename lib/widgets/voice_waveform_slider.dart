@@ -46,7 +46,6 @@ class VoiceWaveformSlider extends StatefulWidget {
 class _VoiceWaveformSliderState extends State<VoiceWaveformSlider> {
   late List<double> _bars;
   bool _isDragging = false;
-  Duration? _lastLoggedPosition;
   // Последняя позиция пальца во время драга — нужна, чтобы на
   // onHorizontalDragEnd (где нет localPosition) сделать финальный seek
   // в ту же точку, где остановился палец.
@@ -56,21 +55,6 @@ class _VoiceWaveformSliderState extends State<VoiceWaveformSlider> {
   void initState() {
     super.initState();
     _generateBars();
-  }
-  
-  @override
-  void didUpdateWidget(VoiceWaveformSlider oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    
-    // Логируем только значимые изменения позиции (больше 500ms)
-    if (widget.isActive && 
-        widget.position != oldWidget.position &&
-        (_lastLoggedPosition == null || 
-         (widget.position - _lastLoggedPosition!).abs() > const Duration(milliseconds: 500))) {
-      debugPrint('🎵 WaveformSlider: position updated - ${widget.position}');
-      debugPrint('  progress: ${widget.duration.inMilliseconds > 0 ? (widget.position.inMilliseconds / widget.duration.inMilliseconds * 100).toStringAsFixed(1) : 0}%');
-      _lastLoggedPosition = widget.position;
-    }
   }
 
   void _generateBars() {
@@ -96,7 +80,6 @@ class _VoiceWaveformSliderState extends State<VoiceWaveformSlider> {
     final newPosition = Duration(milliseconds: newPositionMs.toInt());
 
     if (isFinal) {
-      debugPrint('🎵 WaveformSlider: final seek to $newPosition');
       if (widget.onSeek == null) return;
       widget.onSeek!(newPosition);
     } else {
