@@ -104,6 +104,8 @@ class ChatModel {
     } else if (json['lastMessage'] is Map) {
       messageType = json['lastMessage']['message_type']?.toString();
     }
+    
+    messageType ??= json['last_message_type']?.toString() ?? json['message_type']?.toString();
 
     String? lastMsg;
     bool isEncrypted = false;
@@ -367,7 +369,16 @@ class ChatModel {
     final trimmed = lastMessage!.trim();
     
     // Проверяем если lastMessage - это JSON объект сообщения
-    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    // И тип сообщения от сервера — один из известных медиа/структурированных типов
+    final isStructuredType = lastMessageType == 'voice' ||
+        lastMessageType == 'voice_message' ||
+        lastMessageType == 'video' ||
+        lastMessageType == 'video_message' ||
+        lastMessageType == 'todo_list' ||
+        lastMessageType == 'poll' ||
+        lastMessageType == 'file';
+
+    if (isStructuredType && trimmed.startsWith('{') && trimmed.endsWith('}')) {
       try {
         final parsed = jsonDecode(trimmed);
         if (parsed is Map) {
@@ -385,6 +396,8 @@ class ChatModel {
           
           if (fileType == 'voice' || fileType == 'voice_message') {
             return '🎙 Голосовое сообщение';
+          } else if (fileType == 'video' || fileType == 'video_message') {
+            return '📹 Видеосообщение';
           } else if (fileType == 'todo_list') {
             return '✅ Список задач';
           } else if (fileType == 'poll') {
@@ -441,6 +454,9 @@ class ChatModel {
         case 'voice':
         case 'voice_message':
           return '🎙 Голосовое сообщение';
+        case 'video':
+        case 'video_message':
+          return '📹 Видеосообщение';
       }
     }
 
@@ -456,6 +472,9 @@ class ChatModel {
           case 'voice':
           case 'voice_message':
             return '🔒 Голосовое сообщение';
+          case 'video':
+          case 'video_message':
+            return '🔒 Видеосообщение';
           default:
             return 'Зашифрованное сообщение';
         }

@@ -43,7 +43,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -61,6 +61,9 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(messages, messages.completionStatus);
             await m.addColumn(messages, messages.votesByOption);
             await m.addColumn(messages, messages.userVotes);
+          }
+          if (from < 4) {
+            await m.addColumn(chats, chats.lastMessageType);
           }
         },
         beforeOpen: (details) async {

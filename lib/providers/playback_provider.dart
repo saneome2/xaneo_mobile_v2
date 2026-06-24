@@ -31,6 +31,7 @@ class PlaybackProvider extends ChangeNotifier {
   Duration _duration = Duration.zero;
   bool _isLoading = false;
   bool _isSeeking = false; // Guard от конкурентных seek
+  bool _isVideo = false;
 
   // После seek() некоторое время positionStream может присылать "хвостовые"
   // события от старого/пересоздаваемого AudioSource с позицией около нуля,
@@ -49,6 +50,7 @@ class PlaybackProvider extends ChangeNotifier {
   Duration get position => _position;
   Duration get duration => _duration;
   bool get isLoading => _isLoading;
+  bool get isVideo => _isVideo;
 
   List<String> _queue = [];
   int _queueIndex = -1;
@@ -221,6 +223,11 @@ class PlaybackProvider extends ChangeNotifier {
   }
 
   void _togglePlay() {
+    if (_isVideo) {
+      _isPlaying = !_isPlaying;
+      notifyListeners();
+      return;
+    }
     if (!_isInitialized || _isSeeking) return;
 
     if (_isPlaying) {
@@ -235,18 +242,55 @@ class PlaybackProvider extends ChangeNotifier {
   }
 
   void pause() {
-    if (_isPlaying) {
-      _player.pause();
+    if (_isVideo) {
+      _isPlaying = false;
+      notifyListeners();
+    } else {
+      if (_isPlaying) {
+        _player.pause();
+      }
     }
   }
 
   void resume() {
-    if (!_isPlaying && _isInitialized && !_isSeeking) {
-      if (_position >= _duration && _duration > Duration.zero) {
-        _restartFrom(Duration.zero);
-      } else {
-        _player.play();
+    if (_isVideo) {
+      _isPlaying = true;
+      notifyListeners();
+    } else {
+      if (!_isPlaying && _isInitialized && !_isSeeking) {
+        if (_position >= _duration && _duration > Duration.zero) {
+          _restartFrom(Duration.zero);
+        } else {
+          _player.play();
+        }
       }
+    }
+  }
+
+  Future<void> playVideo(String url, String title, String subtitle, {
+    Duration? duration
+  }) async {
+    if (_currentAudioUrl == url && _isVideo) {
+      _togglePlay();
+      return;
+    }
+
+    await stop();
+
+    _isVideo = true;
+    _currentAudioUrl = url;
+    _title = title;
+    _subtitle = subtitle;
+    _isPlaying = true;
+    _isInitialized = true;
+    _duration = duration ?? Duration.zero;
+    notifyListeners();
+  }
+
+  void setPlaying(bool playing) {
+    if (_isPlaying != playing) {
+      _isPlaying = playing;
+      notifyListeners();
     }
   }
 
@@ -347,6 +391,7 @@ class PlaybackProvider extends ChangeNotifier {
     _duration = Duration.zero;
     _isLoading = false;
     _isSeeking = false;
+    _isVideo = false;
     _seekTargetPosition = null;
     _seekCompletedAt = null;
     notifyListeners();

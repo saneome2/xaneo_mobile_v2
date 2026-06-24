@@ -1,12 +1,15 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:provider/provider.dart';
+import '../providers/playback_provider.dart';
 
 class VideoMessagePlayer extends StatefulWidget {
   final String videoUrl;
   final String? jwtToken;
   final double duration;
   final String? localPath;
+  final String? senderName;
 
   const VideoMessagePlayer({
     super.key,
@@ -14,17 +17,36 @@ class VideoMessagePlayer extends StatefulWidget {
     this.jwtToken,
     required this.duration,
     this.localPath,
+    this.senderName,
   });
 
   @override
   State<VideoMessagePlayer> createState() => _VideoMessagePlayerState();
 }
 
-class _VideoMessagePlayerState extends State<VideoMessagePlayer> {
+class _VideoMessagePlayerState extends State<VideoMessagePlayer> with AutomaticKeepAliveClientMixin {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
   bool _isPlaying = false;
   bool _hasError = false;
+  PlaybackProvider? _playbackProvider;
+
+  @override
+  bool get wantKeepAlive {
+    if (_playbackProvider == null) return false;
+    return _playbackProvider!.currentAudioUrl == widget.videoUrl && _playbackProvider!.isVideo;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final newProvider = Provider.of<PlaybackProvider>(context);
+    if (_playbackProvider != newProvider) {
+      _playbackProvider?.removeListener(_onPlaybackProviderChanged);
+      _playbackProvider = newProvider;
+      _playbackProvider?.addListener(_onPlaybackProviderChanged);
+    }
+  }
 
   @override
   void initState() {
@@ -69,6 +91,8 @@ class _VideoMessagePlayerState extends State<VideoMessagePlayer> {
   void _videoListener() {
     if (_controller == null) return;
     final isPlaying = _controller!.value.isPlaying;
+    final isCompleted = _controller!.value.position >= _controller!.value.duration;
+
     if (isPlaying != _isPlaying) {
       if (mounted) {
         setState(() {
@@ -76,10 +100,44 @@ class _VideoMessagePlayerState extends State<VideoMessagePlayer> {
         });
       }
     }
+
+    if (_playbackProvider != null) {
+      final isCurrent = _playbackProvider!.currentAudioUrl == widget.videoUrl && _playbackProvider!.isVideo;
+      if (isCurrent) {
+        if (isCompleted && _playbackProvider!.isPlaying) {
+          _playbackProvider!.setPlaying(false);
+        } else if (isPlaying != _playbackProvider!.isPlaying && !isCompleted) {
+          _playbackProvider!.setPlaying(isPlaying);
+        }
+      }
+    }
+  }
+
+  void _onPlaybackProviderChanged() {
+    if (_playbackProvider == null || _controller == null || !_isInitialized) return;
+
+    final isCurrent = _playbackProvider!.currentAudioUrl == widget.videoUrl && _playbackProvider!.isVideo;
+    if (isCurrent) {
+      final shouldBePlaying = _playbackProvider!.isPlaying;
+      if (shouldBePlaying && !_controller!.value.isPlaying) {
+        if (_controller!.value.position >= _controller!.value.duration) {
+          _controller!.seekTo(Duration.zero);
+        }
+        _controller!.play();
+      } else if (!shouldBePlaying && _controller!.value.isPlaying) {
+        _controller!.pause();
+      }
+    } else {
+      if (_controller!.value.isPlaying) {
+        _controller!.pause();
+      }
+    }
+    updateKeepAlive();
   }
 
   @override
   void dispose() {
+    _playbackProvider?.removeListener(_onPlaybackProviderChanged);
     _controller?.removeListener(_videoListener);
     _controller?.dispose();
     super.dispose();
@@ -87,22 +145,18 @@ class _VideoMessagePlayerState extends State<VideoMessagePlayer> {
 
   void _togglePlay() {
     if (_controller == null || !_isInitialized) return;
-    setState(() {
-      if (_controller!.value.isPlaying) {
-        _controller!.pause();
-        _isPlaying = false;
-      } else {
-        if (_controller!.value.position >= _controller!.value.duration) {
-          _controller!.seekTo(Duration.zero);
-        }
-        _controller!.play();
-        _isPlaying = true;
-      }
-    });
+    final playbackProvider = Provider.of<PlaybackProvider>(context, listen: false);
+    playbackProvider.playVideo(
+      widget.videoUrl,
+      'Видеосообщение',
+      widget.senderName ?? 'Видеосообщение',
+      duration: Duration(milliseconds: (widget.duration * 1000).toInt()),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     if (_hasError) {
       return Container(
         width: 180,
@@ -183,3 +237,4 @@ class _VideoMessagePlayerState extends State<VideoMessagePlayer> {
     );
   }
 }
+

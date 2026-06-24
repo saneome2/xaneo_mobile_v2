@@ -379,7 +379,8 @@ class _ChatScreenState extends State<ChatScreen> {
           }
 
           String? fileInfoJson;
-          if (decrypted != null && decrypted.trim().startsWith('{')) {
+          final hasServerFile = item['attached_file_id'] != null || item['file_url'] != null;
+          if (hasServerFile && decrypted != null && decrypted.trim().startsWith('{')) {
             try {
               final parsed = jsonDecode(decrypted);
               if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice' || parsed['type'] == 'video_message') && parsed['file_id'] != null) {
@@ -530,7 +531,8 @@ class _ChatScreenState extends State<ChatScreen> {
           }
 
           String? fileInfoJson;
-          if (decrypted != null && decrypted.trim().startsWith('{')) {
+          final hasServerFile = item['attached_file_id'] != null || item['file_url'] != null;
+          if (hasServerFile && decrypted != null && decrypted.trim().startsWith('{')) {
             try {
               final parsed = jsonDecode(decrypted);
               if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice' || parsed['type'] == 'video_message') && parsed['file_id'] != null) {
@@ -777,7 +779,8 @@ class _ChatScreenState extends State<ChatScreen> {
       final msgId = event['id']?.toString() ?? 'ws_${DateTime.now().millisecondsSinceEpoch}';
 
       String? fileInfoJson;
-      if (decrypted != null && decrypted.trim().startsWith('{')) {
+      final hasServerFile = event['attached_file_id'] != null || event['file_id'] != null;
+      if (hasServerFile && decrypted != null && decrypted.trim().startsWith('{')) {
         try {
           final parsed = jsonDecode(decrypted);
           if (parsed is Map && (parsed['type'] == 'file' || parsed['type'] == 'voice' || parsed['type'] == 'video_message') && parsed['file_id'] != null) {
@@ -859,6 +862,7 @@ class _ChatScreenState extends State<ChatScreen> {
         isEncrypted: decrypted == null,
         isArchived: widget.chat.isArchived,
         archivedAt: widget.chat.archivedAt,
+        lastMessageType: messageType,
       );
       await _localChatRepo.saveChat(updatedChat);
     }
@@ -955,6 +959,7 @@ class _ChatScreenState extends State<ChatScreen> {
       isEncrypted: false,
       isArchived: widget.chat.isArchived,
       archivedAt: widget.chat.archivedAt,
+      lastMessageType: 'voice',
     );
     await _localChatRepo.saveChat(updatedChat);
   }
@@ -1045,6 +1050,7 @@ class _ChatScreenState extends State<ChatScreen> {
       isEncrypted: false,
       isArchived: widget.chat.isArchived,
       archivedAt: widget.chat.archivedAt,
+      lastMessageType: 'video_message',
     );
     await _localChatRepo.saveChat(updatedChat);
   }
@@ -1112,6 +1118,7 @@ class _ChatScreenState extends State<ChatScreen> {
       isEncrypted: false,
       isArchived: widget.chat.isArchived,
       archivedAt: widget.chat.archivedAt,
+      lastMessageType: 'video_message',
     );
     await _localChatRepo.saveChat(updatedChat);
 
@@ -1930,6 +1937,7 @@ class _ChatScreenState extends State<ChatScreen> {
       isEncrypted: false,
       isArchived: widget.chat.isArchived,
       archivedAt: widget.chat.archivedAt,
+      lastMessageType: 'voice',
     );
     await _localChatRepo.saveChat(updatedChat);
 
@@ -2446,6 +2454,7 @@ class _ChatScreenState extends State<ChatScreen> {
               isFavorites: widget.chat.isFavorites,
               otherUser: _otherUser,
               isEncrypted: widget.chat.isEncrypted,
+              lastMessageType: widget.chat.lastMessageType,
             );
             ChatInfoModal.show(context, currentChat);
           },
@@ -4536,43 +4545,33 @@ class MessageBubble extends StatelessWidget {
     Map<String, dynamic>? fileData;
     String displayContent = message.textContent;
 
-    // 1. Попытка распарсить JSON из textContent (E2E шифрованный формат сообщения-файла)
-    if (message.textContent.trim().startsWith('{')) {
-      try {
-        final parsed = jsonDecode(message.textContent);
-        if (parsed is Map) {
-          final pType = parsed['type'];
-          if ((pType == 'file' || pType == 'voice' || pType == 'voice_message') && parsed['file_id'] != null) {
-            fileData = Map<String, dynamic>.from(parsed);
-            displayContent = ''; // Чистое файловое сообщение без текстовой подписи
-          } else if (pType == 'todo_list' || pType == 'poll') {
-            final isTodo = pType == 'todo_list';
-            final isPoll = pType == 'poll';
-            final isNative = parsed['is_native'] == true;
-            final isTodoType = message.messageType == 'todo_list';
-            final isPollType = message.messageType == 'poll';
+    final isPoll = message.messageType == 'poll';
+    final isTodo = message.messageType == 'todo_list';
+    final hasFile = message.fileUrl != null && message.fileUrl!.isNotEmpty;
 
-            if ((isTodo && (isTodoType || isNative)) || (isPoll && (isPollType || isNative))) {
-              fileData = Map<String, dynamic>.from(parsed);
+    if (isPoll || isTodo || hasFile) {
+      if (hasFile) {
+        try {
+          final parsed = jsonDecode(message.fileUrl!);
+          if (parsed is Map) {
+            fileData = Map<String, dynamic>.from(parsed);
+            if (message.textContent.trim().startsWith('{')) {
               displayContent = '';
             }
           }
+        } catch (_) {}
+      } else {
+        // 1. Попытка распарсить JSON из textContent (для todo/poll)
+        if (message.textContent.trim().startsWith('{')) {
+          try {
+            final parsed = jsonDecode(message.textContent);
+            if (parsed is Map) {
+              fileData = Map<String, dynamic>.from(parsed);
+              displayContent = '';
+            }
+          } catch (_) {}
         }
-      } catch (_) {}
-    }
-
-    // 2. Попытка распарсить JSON из поля fileUrl
-    if (fileData == null && message.fileUrl != null && message.fileUrl!.isNotEmpty) {
-      try {
-        final parsed = jsonDecode(message.fileUrl!);
-        if (parsed is Map) {
-          fileData = Map<String, dynamic>.from(parsed);
-          // Если в тексте сообщения была сериализованная копия JSON, очищаем отображение текста
-          if (message.textContent.trim().startsWith('{')) {
-            displayContent = '';
-          }
-        }
-      } catch (_) {}
+      }
     }
 
     Widget? attachmentWidget;
@@ -4652,11 +4651,49 @@ class MessageBubble extends StatelessWidget {
             : double.tryParse(fileData['duration']?.toString() ?? '') ?? 0.0;
         final localPath = fileData['local_path']?.toString();
         final videoSource = (localPath != null && localPath.isNotEmpty) ? localPath : absoluteUrl;
-        attachmentWidget = VideoMessagePlayer(
+        
+        final videoWidget = VideoMessagePlayer(
           videoUrl: videoSource,
           jwtToken: jwtToken,
           duration: duration,
           localPath: localPath,
+          senderName: isMe ? 'Вы' : senderRealName,
+        );
+        
+        attachmentWidget = Stack(
+          alignment: Alignment.center,
+          children: [
+            videoWidget,
+            if (isOnlyMedia)
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _formatTime(message.timestamp),
+                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: 4),
+                        FaIcon(
+                          message.isRead ? FontAwesomeIcons.checkDouble : FontAwesomeIcons.check,
+                          size: 10,
+                          color: Colors.white,
+                        ),
+                      ]
+                    ],
+                  ),
+                ),
+              ),
+          ],
         );
       } else if (isVoice) {
         final duration = fileData['duration'] is num

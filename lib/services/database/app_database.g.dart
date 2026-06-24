@@ -133,6 +133,12 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, Chat> {
   late final GeneratedColumn<DateTime> archivedAt = GeneratedColumn<DateTime>(
       'archived_at', aliasedName, true,
       type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _lastMessageTypeMeta =
+      const VerificationMeta('lastMessageType');
+  @override
+  late final GeneratedColumn<String> lastMessageType = GeneratedColumn<String>(
+      'last_message_type', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -150,7 +156,8 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, Chat> {
         otherUserJson,
         isEncrypted,
         isArchived,
-        archivedAt
+        archivedAt,
+        lastMessageType
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -251,6 +258,12 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, Chat> {
           archivedAt.isAcceptableOrUnknown(
               data['archived_at']!, _archivedAtMeta));
     }
+    if (data.containsKey('last_message_type')) {
+      context.handle(
+          _lastMessageTypeMeta,
+          lastMessageType.isAcceptableOrUnknown(
+              data['last_message_type']!, _lastMessageTypeMeta));
+    }
     return context;
   }
 
@@ -292,6 +305,8 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, Chat> {
           .read(DriftSqlType.bool, data['${effectivePrefix}is_archived'])!,
       archivedAt: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}archived_at']),
+      lastMessageType: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}last_message_type']),
     );
   }
 
@@ -318,6 +333,7 @@ class Chat extends DataClass implements Insertable<Chat> {
   final bool isEncrypted;
   final bool isArchived;
   final DateTime? archivedAt;
+  final String? lastMessageType;
   const Chat(
       {required this.id,
       required this.serverChatId,
@@ -334,7 +350,8 @@ class Chat extends DataClass implements Insertable<Chat> {
       this.otherUserJson,
       required this.isEncrypted,
       required this.isArchived,
-      this.archivedAt});
+      this.archivedAt,
+      this.lastMessageType});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -365,6 +382,9 @@ class Chat extends DataClass implements Insertable<Chat> {
     map['is_archived'] = Variable<bool>(isArchived);
     if (!nullToAbsent || archivedAt != null) {
       map['archived_at'] = Variable<DateTime>(archivedAt);
+    }
+    if (!nullToAbsent || lastMessageType != null) {
+      map['last_message_type'] = Variable<String>(lastMessageType);
     }
     return map;
   }
@@ -398,6 +418,9 @@ class Chat extends DataClass implements Insertable<Chat> {
       archivedAt: archivedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(archivedAt),
+      lastMessageType: lastMessageType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastMessageType),
     );
   }
 
@@ -421,6 +444,7 @@ class Chat extends DataClass implements Insertable<Chat> {
       isEncrypted: serializer.fromJson<bool>(json['isEncrypted']),
       isArchived: serializer.fromJson<bool>(json['isArchived']),
       archivedAt: serializer.fromJson<DateTime?>(json['archivedAt']),
+      lastMessageType: serializer.fromJson<String?>(json['lastMessageType']),
     );
   }
   @override
@@ -443,6 +467,7 @@ class Chat extends DataClass implements Insertable<Chat> {
       'isEncrypted': serializer.toJson<bool>(isEncrypted),
       'isArchived': serializer.toJson<bool>(isArchived),
       'archivedAt': serializer.toJson<DateTime?>(archivedAt),
+      'lastMessageType': serializer.toJson<String?>(lastMessageType),
     };
   }
 
@@ -462,7 +487,8 @@ class Chat extends DataClass implements Insertable<Chat> {
           Value<String?> otherUserJson = const Value.absent(),
           bool? isEncrypted,
           bool? isArchived,
-          Value<DateTime?> archivedAt = const Value.absent()}) =>
+          Value<DateTime?> archivedAt = const Value.absent(),
+          Value<String?> lastMessageType = const Value.absent()}) =>
       Chat(
         id: id ?? this.id,
         serverChatId: serverChatId ?? this.serverChatId,
@@ -484,6 +510,9 @@ class Chat extends DataClass implements Insertable<Chat> {
         isEncrypted: isEncrypted ?? this.isEncrypted,
         isArchived: isArchived ?? this.isArchived,
         archivedAt: archivedAt.present ? archivedAt.value : this.archivedAt,
+        lastMessageType: lastMessageType.present
+            ? lastMessageType.value
+            : this.lastMessageType,
       );
   Chat copyWithCompanion(ChatsCompanion data) {
     return Chat(
@@ -518,6 +547,9 @@ class Chat extends DataClass implements Insertable<Chat> {
           data.isArchived.present ? data.isArchived.value : this.isArchived,
       archivedAt:
           data.archivedAt.present ? data.archivedAt.value : this.archivedAt,
+      lastMessageType: data.lastMessageType.present
+          ? data.lastMessageType.value
+          : this.lastMessageType,
     );
   }
 
@@ -539,7 +571,8 @@ class Chat extends DataClass implements Insertable<Chat> {
           ..write('otherUserJson: $otherUserJson, ')
           ..write('isEncrypted: $isEncrypted, ')
           ..write('isArchived: $isArchived, ')
-          ..write('archivedAt: $archivedAt')
+          ..write('archivedAt: $archivedAt, ')
+          ..write('lastMessageType: $lastMessageType')
           ..write(')'))
         .toString();
   }
@@ -561,7 +594,8 @@ class Chat extends DataClass implements Insertable<Chat> {
       otherUserJson,
       isEncrypted,
       isArchived,
-      archivedAt);
+      archivedAt,
+      lastMessageType);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -581,7 +615,8 @@ class Chat extends DataClass implements Insertable<Chat> {
           other.otherUserJson == this.otherUserJson &&
           other.isEncrypted == this.isEncrypted &&
           other.isArchived == this.isArchived &&
-          other.archivedAt == this.archivedAt);
+          other.archivedAt == this.archivedAt &&
+          other.lastMessageType == this.lastMessageType);
 }
 
 class ChatsCompanion extends UpdateCompanion<Chat> {
@@ -601,6 +636,7 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
   final Value<bool> isEncrypted;
   final Value<bool> isArchived;
   final Value<DateTime?> archivedAt;
+  final Value<String?> lastMessageType;
   const ChatsCompanion({
     this.id = const Value.absent(),
     this.serverChatId = const Value.absent(),
@@ -618,6 +654,7 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
     this.isEncrypted = const Value.absent(),
     this.isArchived = const Value.absent(),
     this.archivedAt = const Value.absent(),
+    this.lastMessageType = const Value.absent(),
   });
   ChatsCompanion.insert({
     this.id = const Value.absent(),
@@ -636,6 +673,7 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
     this.isEncrypted = const Value.absent(),
     this.isArchived = const Value.absent(),
     this.archivedAt = const Value.absent(),
+    this.lastMessageType = const Value.absent(),
   })  : serverChatId = Value(serverChatId),
         name = Value(name);
   static Insertable<Chat> custom({
@@ -655,6 +693,7 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
     Expression<bool>? isEncrypted,
     Expression<bool>? isArchived,
     Expression<DateTime>? archivedAt,
+    Expression<String>? lastMessageType,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -673,6 +712,7 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
       if (isEncrypted != null) 'is_encrypted': isEncrypted,
       if (isArchived != null) 'is_archived': isArchived,
       if (archivedAt != null) 'archived_at': archivedAt,
+      if (lastMessageType != null) 'last_message_type': lastMessageType,
     });
   }
 
@@ -692,7 +732,8 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
       Value<String?>? otherUserJson,
       Value<bool>? isEncrypted,
       Value<bool>? isArchived,
-      Value<DateTime?>? archivedAt}) {
+      Value<DateTime?>? archivedAt,
+      Value<String?>? lastMessageType}) {
     return ChatsCompanion(
       id: id ?? this.id,
       serverChatId: serverChatId ?? this.serverChatId,
@@ -710,6 +751,7 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
       isEncrypted: isEncrypted ?? this.isEncrypted,
       isArchived: isArchived ?? this.isArchived,
       archivedAt: archivedAt ?? this.archivedAt,
+      lastMessageType: lastMessageType ?? this.lastMessageType,
     );
   }
 
@@ -764,6 +806,9 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
     if (archivedAt.present) {
       map['archived_at'] = Variable<DateTime>(archivedAt.value);
     }
+    if (lastMessageType.present) {
+      map['last_message_type'] = Variable<String>(lastMessageType.value);
+    }
     return map;
   }
 
@@ -785,7 +830,8 @@ class ChatsCompanion extends UpdateCompanion<Chat> {
           ..write('otherUserJson: $otherUserJson, ')
           ..write('isEncrypted: $isEncrypted, ')
           ..write('isArchived: $isArchived, ')
-          ..write('archivedAt: $archivedAt')
+          ..write('archivedAt: $archivedAt, ')
+          ..write('lastMessageType: $lastMessageType')
           ..write(')'))
         .toString();
   }
@@ -1471,6 +1517,7 @@ typedef $$ChatsTableCreateCompanionBuilder = ChatsCompanion Function({
   Value<bool> isEncrypted,
   Value<bool> isArchived,
   Value<DateTime?> archivedAt,
+  Value<String?> lastMessageType,
 });
 typedef $$ChatsTableUpdateCompanionBuilder = ChatsCompanion Function({
   Value<int> id,
@@ -1489,6 +1536,7 @@ typedef $$ChatsTableUpdateCompanionBuilder = ChatsCompanion Function({
   Value<bool> isEncrypted,
   Value<bool> isArchived,
   Value<DateTime?> archivedAt,
+  Value<String?> lastMessageType,
 });
 
 final class $$ChatsTableReferences
@@ -1498,7 +1546,7 @@ final class $$ChatsTableReferences
   static MultiTypedResultKey<$MessagesTable, List<Message>> _messagesRefsTable(
           _$AppDatabase db) =>
       MultiTypedResultKey.fromTable(db.messages,
-          aliasName: $_aliasNameGenerator(db.chats.id, db.messages.chatId));
+          aliasName: 'chats__id__messages__chat_id');
 
   $$MessagesTableProcessedTableManager get messagesRefs {
     final manager = $$MessagesTableTableManager($_db, $_db.messages)
@@ -1567,6 +1615,10 @@ class $$ChatsTableFilterComposer extends Composer<_$AppDatabase, $ChatsTable> {
 
   ColumnFilters<DateTime> get archivedAt => $composableBuilder(
       column: $table.archivedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get lastMessageType => $composableBuilder(
+      column: $table.lastMessageType,
+      builder: (column) => ColumnFilters(column));
 
   Expression<bool> messagesRefs(
       Expression<bool> Function($$MessagesTableFilterComposer f) f) {
@@ -1650,6 +1702,10 @@ class $$ChatsTableOrderingComposer
 
   ColumnOrderings<DateTime> get archivedAt => $composableBuilder(
       column: $table.archivedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get lastMessageType => $composableBuilder(
+      column: $table.lastMessageType,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$ChatsTableAnnotationComposer
@@ -1708,6 +1764,9 @@ class $$ChatsTableAnnotationComposer
 
   GeneratedColumn<DateTime> get archivedAt => $composableBuilder(
       column: $table.archivedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get lastMessageType => $composableBuilder(
+      column: $table.lastMessageType, builder: (column) => column);
 
   Expression<T> messagesRefs<T extends Object>(
       Expression<T> Function($$MessagesTableAnnotationComposer a) f) {
@@ -1770,6 +1829,7 @@ class $$ChatsTableTableManager extends RootTableManager<
             Value<bool> isEncrypted = const Value.absent(),
             Value<bool> isArchived = const Value.absent(),
             Value<DateTime?> archivedAt = const Value.absent(),
+            Value<String?> lastMessageType = const Value.absent(),
           }) =>
               ChatsCompanion(
             id: id,
@@ -1788,6 +1848,7 @@ class $$ChatsTableTableManager extends RootTableManager<
             isEncrypted: isEncrypted,
             isArchived: isArchived,
             archivedAt: archivedAt,
+            lastMessageType: lastMessageType,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -1806,6 +1867,7 @@ class $$ChatsTableTableManager extends RootTableManager<
             Value<bool> isEncrypted = const Value.absent(),
             Value<bool> isArchived = const Value.absent(),
             Value<DateTime?> archivedAt = const Value.absent(),
+            Value<String?> lastMessageType = const Value.absent(),
           }) =>
               ChatsCompanion.insert(
             id: id,
@@ -1824,6 +1886,7 @@ class $$ChatsTableTableManager extends RootTableManager<
             isEncrypted: isEncrypted,
             isArchived: isArchived,
             archivedAt: archivedAt,
+            lastMessageType: lastMessageType,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) =>
@@ -1901,8 +1964,8 @@ final class $$MessagesTableReferences
     extends BaseReferences<_$AppDatabase, $MessagesTable, Message> {
   $$MessagesTableReferences(super.$_db, super.$_table, super.$_typedResult);
 
-  static $ChatsTable _chatIdTable(_$AppDatabase db) => db.chats
-      .createAlias($_aliasNameGenerator(db.messages.chatId, db.chats.id));
+  static $ChatsTable _chatIdTable(_$AppDatabase db) =>
+      db.chats.createAlias('messages__chat_id__chats__id');
 
   $$ChatsTableProcessedTableManager get chatId {
     final $_column = $_itemColumn<int>('chat_id')!;

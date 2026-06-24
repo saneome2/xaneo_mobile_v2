@@ -17,4 +17,5 @@ class Chats extends Table {
   BoolColumn get isEncrypted => boolean().withDefault(const Constant(false))();
   BoolColumn get isArchived => boolean().withDefault(const Constant(false))();
   DateTimeColumn get archivedAt => dateTime().nullable()();
+  TextColumn get lastMessageType => text().nullable()();
 }

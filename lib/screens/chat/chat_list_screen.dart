@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -184,6 +185,15 @@ class _ChatListScreenState extends State<ChatListScreen>
               chat.id,
             );
             if (decrypted != null) {
+              String? inferredType = chat.lastMessageType;
+              if (decrypted.trim().startsWith('{')) {
+                try {
+                  final parsed = jsonDecode(decrypted);
+                  if (parsed is Map) {
+                    inferredType = parsed['type']?.toString() ?? chat.lastMessageType;
+                  }
+                } catch (_) {}
+              }
               return ChatModel(
                 id: chat.id,
                 name: chat.name,
@@ -200,6 +210,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                 isEncrypted: false,
                 isArchived: chat.isArchived,
                 archivedAt: chat.archivedAt,
+                lastMessageType: inferredType,
               );
             }
           }
@@ -271,6 +282,7 @@ class _ChatListScreenState extends State<ChatListScreen>
       'title': payload['title'] ?? payload['name'],
       'avatar_url': payload['avatar_url'],
       'last_message': payload['last_message'],
+      'last_message_type': payload['last_message_type'] ?? payload['message_type'],
       'last_message_time': payload['last_message_time'],
       'unread_count': payload['unread_count'],
     };
@@ -322,6 +334,15 @@ class _ChatListScreenState extends State<ChatListScreen>
     final decrypted = await cryptoService.decryptChatMessage(encryptedText, chatId);
 
     final createdAt = _parseApiDateTime(event['created_at']);
+    String? inferredType = event['message_type']?.toString() ?? event['last_message_type']?.toString();
+    if (decrypted != null && decrypted.trim().startsWith('{')) {
+      try {
+        final parsed = jsonDecode(decrypted);
+        if (parsed is Map) {
+          inferredType = parsed['type']?.toString() ?? inferredType;
+        }
+      } catch (_) {}
+    }
 
     final updated = ChatModel(
       id: existing.id,
@@ -339,6 +360,7 @@ class _ChatListScreenState extends State<ChatListScreen>
       isEncrypted: decrypted == null,
       isArchived: existing.isArchived,
       archivedAt: existing.archivedAt,
+      lastMessageType: inferredType,
     );
 
     await _localChatRepo.saveChat(updated);
@@ -358,6 +380,16 @@ class _ChatListScreenState extends State<ChatListScreen>
     final decrypted = await cryptoService.decryptChatMessage(message, chat.id);
     if (decrypted == null) return chat;
 
+    String? inferredType = chat.lastMessageType;
+    if (decrypted.trim().startsWith('{')) {
+      try {
+        final parsed = jsonDecode(decrypted);
+        if (parsed is Map) {
+          inferredType = parsed['type']?.toString() ?? inferredType;
+        }
+      } catch (_) {}
+    }
+
     return ChatModel(
       id: chat.id,
       name: chat.name,
@@ -374,6 +406,7 @@ class _ChatListScreenState extends State<ChatListScreen>
       isEncrypted: false,
       isArchived: chat.isArchived,
       archivedAt: chat.archivedAt,
+      lastMessageType: inferredType,
     );
   }
 

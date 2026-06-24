@@ -209,6 +209,7 @@ class LocalChatRepository {
       isEncrypted: row.isEncrypted,
       isArchived: row.isArchived,
       archivedAt: row.archivedAt,
+      lastMessageType: row.lastMessageType,
     );
   }
 
@@ -234,6 +235,7 @@ class LocalChatRepository {
       isEncrypted: Value(model.isEncrypted),
       isArchived: Value(model.isArchived),
       archivedAt: Value(model.archivedAt),
+      lastMessageType: Value(model.lastMessageType),
     );
   }
 
@@ -284,6 +286,7 @@ class LocalChatRepository {
       isEncrypted: incomingIsLatest ? incoming.isEncrypted : existing.isEncrypted,
       isArchived: incoming.isArchived,
       archivedAt: incoming.archivedAt ?? existing.archivedAt,
+      lastMessageType: incomingIsLatest ? incoming.lastMessageType : existing.lastMessageType,
     );
   }
 }
